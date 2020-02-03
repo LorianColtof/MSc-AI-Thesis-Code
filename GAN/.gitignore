@@ -1,2 +1,4 @@
 data/
 images_gan/
+images_wgan_gp/
+*.png
