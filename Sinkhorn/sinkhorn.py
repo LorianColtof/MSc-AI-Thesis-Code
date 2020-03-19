@@ -6,6 +6,8 @@ import math
 
 import time
 
+from ot.smooth import smooth_ot_dual
+
 
 def sinkhorn(C: torch.tensor, a: torch.tensor, b: torch.tensor,
              epsilon: float, num_iter: int = 1000,
@@ -13,6 +15,16 @@ def sinkhorn(C: torch.tensor, a: torch.tensor, b: torch.tensor,
     K = torch.exp(-C / epsilon)
     v = torch.ones_like(b)
     u = torch.ones_like(a)
+
+    def transform_C_f_g(f, g):
+        return (C - f.expand_as(C.T).T - g.expand_as(C)) / epsilon
+
+    def calculate_loss(f, g):
+        return -(f @ a + g @ b
+                 - epsilon * torch.exp(
+                    transform_C_f_g(f, g)).sum())
+
+    losses = []
 
     for i in range(num_iter):
         print(f"Iteration {i}")
@@ -25,11 +37,176 @@ def sinkhorn(C: torch.tensor, a: torch.tensor, b: torch.tensor,
         if u_diff < converge_error:
             break
 
-    return torch.diag(u) @ K @ torch.diag(v)
+        f = epsilon * u.log()
+        g = epsilon * v.log()
+
+        # print(f)
+        # print(g)
+
+        loss = -calculate_loss(f, g).item()
+        losses.append(loss)
+
+    # plt.plot(list(range(len(losses))), losses)
+    # plt.show()
+
+    return torch.diag(u) @ K @ torch.diag(v), f, g
+
+
+def sinkhorn_quadratic_cyclic_projection(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, epsilon: float,
+        num_iter: int = 50000, convergence_error: float = 1e-8, log=False):
+    n = a.size()[0]
+    m = b.size()[0]
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    for it in range(num_iter):
+        f_prev = f
+        g_prev = g
+
+        # The minus is missing in the paper!
+        # It should be equation (7) from https://arxiv.org/pdf/1903.01112.pdf
+        rho = -(f.expand_as(C.T).T + g.expand_as(C) - C).clamp(max=0)
+
+        f = (epsilon * a - (rho + g.expand_as(C) - C).sum(1)) / m
+        g = (epsilon * b - (rho + f.expand_as(C.T).T - C).sum(0)) / n
+
+        f_diff = (f_prev - f).abs().sum()
+        g_diff = (g_prev - g).abs().sum()
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"f_diff {f_diff}")
+            print(f"g_diff {g_diff}")
+
+        if f_diff < convergence_error and g_diff < convergence_error:
+            break
+
+    # This is also wrong in the paper, it should be
+    #   (f (+) g - C)_+ / epsilon,
+    # or, equivalently,
+    #   (rho + f (+) g - C) / epsilon.
+    # We use the former since it does not require computing rho with
+    # the final f and g again.
+    return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+
+
+def sinkhorn_quadratic_gradient_descent(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, epsilon: float,
+        num_iter: int = 50000, convergence_error: float = 1e-8, log=False):
+    n = a.size()[0]
+    m = b.size()[0]
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    step = 1.0 / (m + n)
+
+    for it in range(num_iter):
+        f_prev = f.clone()
+        g_prev = g.clone()
+
+        P = (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+
+        f -= step * epsilon * (P.sum(1) - a)
+        g -= step * epsilon * (P.sum(0) - b)
+
+        f_diff = (f_prev - f).abs().sum()
+        g_diff = (g_prev - g).abs().sum()
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"f_diff {f_diff}")
+            print(f"g_diff {g_diff}")
+
+        if f_diff < convergence_error and g_diff < convergence_error:
+            break
+
+    return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+
+
+def sinkhorn_quadratic_fixed_point_iteration(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, epsilon: float,
+        num_iter: int = 50000, convergence_error: float = 1e-8, log=False):
+    n = a.size()[0]
+    m = b.size()[0]
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    for it in range(num_iter):
+        f_prev = f.clone()
+        g_prev = g.clone()
+
+        P = (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+        v = - epsilon * (P.sum(1) - a)
+        f += (v - v.sum() / (2 * n)) / m
+        u = - epsilon * (P.sum(0) - b)
+        g += (u - u.sum() / (2 * m)) / n
+
+        f_diff = (f_prev - f).abs().sum()
+        g_diff = (g_prev - g).abs().sum()
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"f_diff {f_diff}")
+            print(f"g_diff {g_diff}")
+
+        if f_diff < convergence_error and g_diff < convergence_error:
+            break
+
+    return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+
+
+def sinkhorn_quadratic_nesterov_gradient_descent(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, epsilon: float,
+        num_iter: int = 50000, convergence_error: float = 1e-8, log=False):
+    n = a.size()[0]
+    m = b.size()[0]
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    step = 1.0 / (m + n)
+
+    f_previous = f
+    g_previous = g
+
+    for it in range(num_iter):
+        f_p = f + n * (f - f_previous) / (n + 3)
+        g_p = g + n * (g - g_previous) / (n + 3)
+
+        P = (f_p.expand_as(C.T).T
+             + g_p.expand_as(C) - C).clamp(min=0) / epsilon
+
+        f_new = f_p - step * epsilon * (P.sum(1) - a)
+        g_new = g_p - step * epsilon * (P.sum(0) - b)
+
+        f_diff = (f_previous - f_new).abs().sum()
+        g_diff = (g_previous - g_new).abs().sum()
+
+        f_previous = f
+        g_previous = g
+
+        f = f_new
+        g = g_new
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"f_diff {f_diff}")
+            print(f"g_diff {g_diff}")
+
+        if f_diff < convergence_error and g_diff < convergence_error:
+            break
+
+    return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
+
 
 
 def example_point_clouds(device: torch.device):
-    N = [300, 200]
+    N = [5, 8]
+    # N = [200, 300]
 
     x = torch.rand(2, N[0], device=device) - .5
     theta = 2 * math.pi * torch.rand(1, N[1], device=device)
@@ -84,6 +261,7 @@ def example_gaussians(device: torch.device):
 
     a = Gaussian(.25, sigma)
     b = Gaussian(.8, sigma)
+
     vmin = .02
     a = normalize(a + a.max() * vmin)
     b = normalize(b + b.max() * vmin)
@@ -98,19 +276,43 @@ def example_gaussians(device: torch.device):
     plt.show()
 
     X, Y = torch.meshgrid([t, t])
-    C = (X - Y)**2
+    C = (X - Y) ** 2
 
     # epsilon = 9e-4
     epsilon = 1e-2
 
     start = time.time()
-    P = sinkhorn(C, a, b, epsilon, num_iter=5000)
+
+    log = False
+    gamma = 1.0 / epsilon
+    P_cp = sinkhorn_quadratic_cyclic_projection(C, a, b, gamma, log=log)
+    print("Cyclic projection done")
+
+    P_gd = sinkhorn_quadratic_gradient_descent(C, a, b, gamma, log=log)
+    print("Gradient descent done")
+
+    P_fpi = sinkhorn_quadratic_fixed_point_iteration(C, a, b, gamma, log=log)
+    print("Fixed point iteration done")
+
+    P_ngd = sinkhorn_quadratic_nesterov_gradient_descent(C, a, b, gamma,
+                                                         log=log)
+    print("Nesterov gradient descent done")
+
+    P_reference = torch.from_numpy(smooth_ot_dual(
+        a.cpu().numpy(), b.cpu().numpy(), C.cpu().numpy(), gamma))
+
     elapsed = time.time() - start
 
     print(f"Elapsed time: {elapsed} seconds")
 
-    plt.imshow(torch.log(P + 1e-5).cpu())
-    plt.show()
+    for P, title in [(P_cp, "Cyclic projection"),
+                     (P_gd, "Gradient descent"),
+                     (P_fpi, "Fixed point iteration"),
+                     (P_ngd, "Nesterov gradient descent"),
+                     (P_reference, "POT reference")]:
+        plt.imshow(torch.log(P + 1e-5).cpu())
+        plt.title(title)
+        plt.show()
 
 
 def main():
@@ -125,7 +327,7 @@ def main():
         print("Using CPU")
         device = torch.device('cpu')
 
-    example_point_clouds(device)
+    # example_point_clouds(device)
     example_gaussians(device)
 
 
