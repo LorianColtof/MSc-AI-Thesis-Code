@@ -1,3 +1,5 @@
+from typing import Union
+
 import torch
 import torch.cuda
 import torch.random
@@ -7,6 +9,11 @@ import math
 import time
 
 from ot.smooth import smooth_ot_dual
+
+def euc_costs(n, scale, device):
+    t = torch.linspace(0, 1 - 1.0 / n, n, device=device)
+    x, y = torch.meshgrid([t, t])
+    return (x - y)**2 * scale
 
 
 def sinkhorn(C: torch.tensor, a: torch.tensor, b: torch.tensor,
@@ -203,6 +210,94 @@ def sinkhorn_quadratic_nesterov_gradient_descent(
     return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
 
 
+def sinkhorn_tsallis_entropy_sor(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, q: float,
+        epsilon: float, num_iter: int = 1000,
+        convergence_error: float = 1e-2, log=False):
+
+    def q_exp(x: Union[torch.Tensor, float]):
+        return (1 + (1 - q) * x) ** (1 / (1 - q))
+
+    n = a.size()[0]
+    m = b.size()[0]
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    A = epsilon * C
+    A = A - A.min(dim=0).values
+    A = (A.T - A.min(dim=1).values).T
+
+    q1 = q_exp(-1)
+
+    for it in range(num_iter):
+        P = q1 / q_exp(A)
+
+        if it > 0:
+            a_diff = (P.sum(1) / a - 1).abs().max()
+            b_diff = (P.sum(0) / b - 1).abs().max()
+
+            if log:
+                print(f"Iteration {it}")
+                print(f"a_diff {a_diff}")
+                print(f"b_diff {b_diff}")
+
+            if a_diff < convergence_error and b_diff < convergence_error:
+                break
+
+        Ap = 1 + (1 - q) * A
+        P_1 = P / Ap
+        P_2 = P_1 / Ap
+
+        d = P.sum(dim=1) - a
+        u = (1 - q / 2.0) * P_2.sum(dim=1)
+        v = -P_1.sum(dim=1)
+
+        delta = v ** 2 - 4 * u * d
+
+        for i in range(n):
+            if delta[i] >= 0 and d[i] < 0 < u[i]:
+                f[i] = - (v[i] + torch.sqrt(delta[i])) / (2 * u[i])
+            elif u[i] != 0:
+                f[i] = -2 * d[i] / v[i]
+            else:
+                f[i] = 0
+
+            max_value = 1 / (2 * (1 - q) * Ap[i, :].max())
+            if f[i].abs() > max_value:
+                f[i] = d[i].sign() * max_value
+
+        A += f.expand_as(A.T).T
+
+        P = q1 / q_exp(A)
+        Ap = 1 + (1 - q) * A
+        P_1 = P / Ap
+        P_2 = P_1 / Ap
+
+        d = P.sum(dim=0) - b
+        u = (1 - q / 2.0) * P_2.sum(dim=0)
+        v = -P_1.sum(dim=0)
+
+        delta = v ** 2 - 4 * u * d
+
+        for j in range(m):
+            if delta[j] >= 0 and d[j] < 0 < v[j]:
+                g[j] = - (v[j] + torch.sqrt(delta[j])) / (2 * u[j])
+            elif u[j] != 0:
+                g[j] = -2 * d[j] / v[j]
+            else:
+                g[j] = 0
+
+            max_value = 1 / (2 * (1 - q) * Ap[:, j].max())
+            if g[j].abs() > max_value:
+                g[j] = d[j].sign() * max_value
+
+        A += g.expand_as(A)
+
+    P = q1 / q_exp(A)
+
+    return P
+
 
 def example_point_clouds(device: torch.device):
     N = [5, 8]
@@ -255,7 +350,8 @@ def example_point_clouds(device: torch.device):
 def example_gaussians(device: torch.device):
     sigma = .06
 
-    t = torch.linspace(0, 1, 200, device=device) #, dtype=torch.float64)
+    n = 200
+    t = torch.linspace(0, 1, n, device=device, dtype=torch.float64)
     Gaussian = lambda t0, sigma: torch.exp(-(t - t0) ** 2 / (2 * sigma ** 2))
     normalize = lambda p: p / p.sum()
 
@@ -275,8 +371,9 @@ def example_gaussians(device: torch.device):
 
     plt.show()
 
-    X, Y = torch.meshgrid([t, t])
-    C = (X - Y) ** 2
+    # X, Y = torch.meshgrid([t, t])
+    # C = (X - Y) ** 2 * n
+    C = euc_costs(n, n, device)
 
     # epsilon = 9e-4
     epsilon = 1e-2
@@ -285,6 +382,13 @@ def example_gaussians(device: torch.device):
 
     log = False
     gamma = 1.0 / epsilon
+
+    P_tsallis = sinkhorn_tsallis_entropy_sor(C, a, b, 0.5, gamma, log=log)
+
+    plt.imshow(torch.log(P_tsallis + 1e-5).cpu())
+    plt.title('Tsallis entropy')
+    plt.show()
+
     P_cp = sinkhorn_quadratic_cyclic_projection(C, a, b, gamma, log=log)
     print("Cyclic projection done")
 
