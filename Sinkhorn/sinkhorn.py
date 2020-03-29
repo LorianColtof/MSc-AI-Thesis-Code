@@ -10,16 +10,23 @@ import time
 
 from ot.smooth import smooth_ot_dual
 
-def euc_costs(n, scale, device):
-    t = torch.linspace(0, 1 - 1.0 / n, n, device=device)
+
+def euc_costs(n, scale, device='cpu', dtype=torch.float32):
+    t = torch.linspace(0, 1 - 1.0 / n, n, device=device, dtype=dtype)
     x, y = torch.meshgrid([t, t])
     return (x - y)**2 * scale
 
 
 def sinkhorn(C: torch.tensor, a: torch.tensor, b: torch.tensor,
              epsilon: float, num_iter: int = 1000,
-             converge_error: float = 1e-8):
-    K = torch.exp(-C / epsilon)
+             converge_error: float = 1e-8,
+             C_is_gibbs_kernel=False):
+
+    if C_is_gibbs_kernel:
+        K = C
+    else:
+        K = torch.exp(-C / epsilon)
+
     v = torch.ones_like(b)
     u = torch.ones_like(a)
 
@@ -210,7 +217,25 @@ def sinkhorn_quadratic_nesterov_gradient_descent(
     return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
 
 
-def sinkhorn_tsallis_entropy_sor(
+def sinkhorn_tsallis_entropy(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, q: float,
+        epsilon: float, num_iter: int = 1000,
+        convergence_error: float = 1e-2, log=False):
+
+    assert q >= 0
+
+    if q == 1:
+        return sinkhorn(C, a, b, epsilon, num_iter, convergence_error)
+
+    elif q < 1:
+        return _sinkhorn_tsallis_entropy_sor(
+            C, a, b, q, epsilon, num_iter, convergence_error, log)
+    else:
+        return _sinkhorn_tsallis_kl_proj_descent(
+            C, a, b, q, epsilon, num_iter, convergence_error, log)
+
+
+def _sinkhorn_tsallis_entropy_sor(
         C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, q: float,
         epsilon: float, num_iter: int = 1000,
         convergence_error: float = 1e-2, log=False):
@@ -299,6 +324,105 @@ def sinkhorn_tsallis_entropy_sor(
     return P
 
 
+def _sinkhorn_tsallis_kl_proj_descent(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor, q: float,
+        epsilon: float, num_iter: int = 1000,
+        rate=1, log=False):
+    assert q > 1
+
+    P = a.reshape(-1, 1) * b.reshape(1, -1)
+
+    def objective():
+        P_q = P**q
+        return (P_q * C).norm() - (P_q - P).sum() / ((1 - q) * epsilon)
+
+    best_score = objective()
+    best_P = P
+
+    for it in range(num_iter):
+        P_grad = C + (q * P**(q - 1) - 1) / ((1 - q) * epsilon)
+        T = (-rate / (it + 1) * P_grad).exp()
+        # P, _, _ = sinkhorn(-epsilon * (P * T).log(), a, b, 1 / epsilon)
+        P, _, _ = sinkhorn(P * T, a, b, 1.0 / epsilon, C_is_gibbs_kernel=True)
+
+        new_score = objective()
+        if log:
+            print(f"Iteration {it}")
+            print(f"Score: {new_score}")
+
+        if new_score < best_score:
+            best_score = new_score
+            best_P = P
+
+    return best_P
+
+
+def sinkhorn_unbalanced(
+        C: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
+        epsilon: float, tau: float, num_iter: int = 5000,
+        convergence_error: float = 1e-8, log=False):
+
+    assert a.shape == b.shape
+
+    n = a.shape[0]
+
+    n_t = torch.Tensor([n], device=C.device)
+
+    log_n = torch.log(n_t)
+
+    f = torch.zeros_like(a)
+    g = torch.zeros_like(b)
+
+    alpha = a.sum()
+    beta = b.sum()
+
+    S = (alpha + beta) / 2 + 0.5 + 1 / (4 * log_n)
+    T = (alpha + beta) / 2 * \
+        (torch.log((alpha + beta) / 2) + 2 * log_n - 1) + log_n + 2.5
+
+    U = max(S + T,
+            torch.Tensor([2 * epsilon], device=C.device),
+            (4 * epsilon * log_n) / tau,
+            (4 * epsilon * (alpha + beta) * log_n) / tau)
+
+    eta = epsilon / U
+
+    A = C / eta
+    A = A - A.min(dim=0).values
+    A = (A.T - A.min(dim=1).values).T
+
+    K = torch.exp(-A)
+
+    scale_factor = (eta * tau) / (eta + tau)
+
+    P = torch.diag((f / eta).exp()) @ K @ torch.diag((g / eta).exp())
+
+    for it in range(num_iter):
+        f_prev = f
+        g_prev = g
+
+        a_k = P.sum(1)
+        f = (f / eta + a.log() - a_k.log()) * scale_factor
+        P = torch.diag((f / eta).exp()) @ K @ torch.diag((g / eta).exp())
+
+        b_k = P.sum(0)
+        g = (g / eta + b.log() - b_k.log()) * scale_factor
+        P = torch.diag((f / eta).exp()) @ K @ torch.diag((g / eta).exp())
+
+        f_diff = (f_prev - f).abs().sum()
+        g_diff = (g_prev - g).abs().sum()
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"f_diff {f_diff}")
+            print(f"g_diff {g_diff}")
+
+        if f_diff < convergence_error and g_diff < convergence_error:
+            break
+
+    return P
+
+
 def example_point_clouds(device: torch.device):
     N = [5, 8]
     # N = [200, 300]
@@ -371,9 +495,10 @@ def example_gaussians(device: torch.device):
 
     plt.show()
 
-    # X, Y = torch.meshgrid([t, t])
-    # C = (X - Y) ** 2 * n
-    C = euc_costs(n, n, device)
+    # Some of the algorithms are sensitive to which one we use
+    X, Y = torch.meshgrid([t, t])
+    C = (X - Y) ** 2
+    # C = euc_costs(n, n, device, dtype=t.dtype)
 
     # epsilon = 9e-4
     epsilon = 1e-2
@@ -383,10 +508,15 @@ def example_gaussians(device: torch.device):
     log = False
     gamma = 1.0 / epsilon
 
-    P_tsallis = sinkhorn_tsallis_entropy_sor(C, a, b, 0.5, gamma, log=log)
+    P_regular, _, _ = sinkhorn(C, a, b, epsilon)
+    P_unbalanced = sinkhorn_unbalanced(C, a, b, epsilon, 1, log=log)
 
-    plt.imshow(torch.log(P_tsallis + 1e-5).cpu())
-    plt.title('Tsallis entropy')
+    plt.imshow(torch.log(P_regular + 1e-5).cpu())
+    plt.title('Normal Sinkhorn')
+    plt.show()
+
+    plt.imshow(torch.log(P_unbalanced + 1e-5).cpu())
+    plt.title('Unbalanced Sinkhorn')
     plt.show()
 
     P_cp = sinkhorn_quadratic_cyclic_projection(C, a, b, gamma, log=log)
