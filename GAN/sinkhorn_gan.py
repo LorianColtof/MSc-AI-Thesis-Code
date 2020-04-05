@@ -149,6 +149,9 @@ def train(dataloader, discriminator, generator, optimizer_G, optimizer_D,
     #
     #     return imgs_cuda, imgs_generated, z
 
+    def lq_dist(x, y):
+        return (torch.norm(x.unsqueeze(1) - y, dim=2, p=q) ** p) / q
+
     data_it = data_iterator()
 
     step = 0
@@ -162,7 +165,7 @@ def train(dataloader, discriminator, generator, optimizer_G, optimizer_D,
         with torch.no_grad():
             z = torch.randn((batch_size, args.latent_dim), device=device)
             imgs_fake = generator(z)
-            C = (torch.norm(imgs_fake - imgs_real, p=q, dim=1) ** p) / p
+            C = lq_dist(imgs_fake, imgs_real)
 
         for _ in range(args.n_discriminator):
             label_fake = discriminator(imgs_fake)
@@ -179,7 +182,7 @@ def train(dataloader, discriminator, generator, optimizer_G, optimizer_D,
         optimizer_G.zero_grad()
 
         imgs_fake = generator(z)
-        C = (torch.norm(imgs_fake - imgs_real, p=q, dim=1) ** p) / p
+        C = lq_dist(imgs_fake, imgs_real)
 
         label_fake = discriminator(imgs_fake)
         label_real = c_e_transform(label_fake, C, epsilon=epsilon)
@@ -187,7 +190,6 @@ def train(dataloader, discriminator, generator, optimizer_G, optimizer_D,
         loss = objective(label_fake, label_real, C, epsilon=epsilon)
 
         # print("Generator loss", loss)
-
 
         loss.backward()
         optimizer_G.step()
