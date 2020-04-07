@@ -1,5 +1,6 @@
 import os
-from typing import Callable, Iterable, Optional, Iterator
+from abc import ABC, abstractmethod
+from typing import Callable, Optional, Iterator
 import argparse
 
 import numpy as np
@@ -32,6 +33,31 @@ def dist(x, y=None, q=2, p=1):
     return (D) ** (p) / p
 
 
+def objective_balanced(label_real: torch.Tensor, label_fake: torch.Tensor,
+              C: torch.Tensor, epsilon: float) -> torch.Tensor:
+    val0 = torch.mean(label_fake)
+    val1 = torch.mean(label_real)
+
+    tmp0 = (-C + (label_fake + torch.t(label_real)))
+    val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
+
+    val = val0 + val1 - val_reg
+    return val
+
+
+def objective_unbalanced(label_real: torch.Tensor, label_fake: torch.Tensor,
+                         C: torch.Tensor, epsilon: float,
+                         tau: float) -> torch.Tensor:
+    val_fake = tau * torch.mean(1 - torch.exp(-label_fake / tau))
+    val_real = tau * torch.mean(1 - torch.exp(-label_real / tau))
+
+    tmp0 = (-C + (label_fake + label_real.T))
+    val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
+
+    val = val_fake + val_real - val_reg
+    return val
+
+
 def c_e_transform(y: torch.Tensor, C: torch.Tensor,
                   epsilon: float = 1) -> torch.Tensor:
     return softmin((C - y), epsilon=epsilon)[:None]
@@ -54,34 +80,216 @@ def softmin(X: torch.tensor, epsilon: float = 1) -> torch.Tensor:
                        None])
 
 
+class ModelTrainingConfiguration(ABC):
+    generator_network: torch.nn.Module
+    discriminator_network: torch.nn.Module
+    generator_optimizer: torch.optim.Optimizer
+    discriminator_optimizer: torch.optim.Optimizer
+
+    dataloader: torch.utils.data.DataLoader
+    output_directory: str
+
+    latent_dimension: int
+    q: float
+    p: float
+
+    @abstractmethod
+    def dual_variable_transform(
+            self, label_real: torch.Tensor,
+            label_fake: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def objective_function(self, label_real: torch.Tensor,
+                           label_fake: torch.Tensor,
+                           cost_matrix: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+                            steps: int, epochs: int) -> None:
+        pass
+
+
+class MnistConfiguration(ModelTrainingConfiguration):
+    epsilon: float
+    tau: float
+
+    p = 2
+    q = 2
+
+    def __init__(self, dataset_dir: str, output_directory: str,
+                 epsilon: float, tau: float):
+        if torch.cuda.is_available():
+            print("Using CUDA")
+            device = torch.device('cuda')
+        else:
+            print("CUDA is not available, falling back to CPU")
+            device = torch.device('cpu')
+
+        self.latent_dimension = 100
+        self.output_directory = output_directory
+
+        batch_size = 128
+        lr_generator = 0.0002
+        lr_discriminator = 1e-4
+
+        self.epsilon = epsilon
+        self.tau = tau
+
+        # load data
+        self.dataloader = torch.utils.data.DataLoader(
+            datasets.MNIST(os.path.join(dataset_dir, 'mnist'),
+                           train=True, download=True,
+                           transform=transforms.Compose([
+                               transforms.ToTensor(),
+                               transforms.Normalize((0.5,), (0.5,))])),
+            batch_size=batch_size, shuffle=True, pin_memory=True)
+
+        img_dim = 28 * 28
+
+        # Initialize models and optimizers
+        self.generator_network = MnistGenerator(
+            self.latent_dimension, img_dim).to(device)
+        self.discriminator_network = MnistDiscriminator(img_dim).to(device)
+
+        self.generator_optimizer = torch.optim.Adam(
+            self.generator_network.parameters(), lr=lr_generator)
+        self.discriminator_optimizer = torch.optim.RMSprop(
+            self.discriminator_network.parameters(), lr=lr_discriminator)
+
+    def dual_variable_transform(self, label_real: torch.Tensor,
+                                cost_matrix: torch.Tensor) -> torch.Tensor:
+        return c_e_tau_transform(label_real, cost_matrix,
+                                 epsilon=self.epsilon, tau=self.tau)
+
+    def objective_function(self, label_real: torch.Tensor,
+                           label_fake: torch.Tensor,
+                           cost_matrix: torch.Tensor) -> torch.Tensor:
+        return objective_unbalanced(label_real, label_fake, cost_matrix,
+                                    epsilon=self.epsilon, tau=self.tau)
+
+    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+                            steps: int, epochs: int) -> None:
+        save_image(data_fake[:25].reshape(-1, 1, 28, 28),
+                   os.path.join(images_path,
+                                'epoch_{}_step_{}.png'.format(epochs, steps)),
+                   nrow=5, normalize=True)
+
+
+class CelebaConfiguration(ModelTrainingConfiguration):
+    epsilon: float
+    tau: float
+
+    p = 2
+    q = 2
+
+    _source_samples_plot: torch.Tensor
+
+    def __init__(self, dataset_directory: str, output_directory: str,
+                 epsilon: float, tau: float):
+        torch.backends.cudnn.enabled = False
+        dtype = torch.cuda.FloatTensor
+        device = torch.cuda.current_device()
+
+        DSOURCE = 128
+        NBATCH = 64
+
+        self.latent_dimension = DSOURCE
+
+        crop_size = 108
+        re_size = 64
+        offset_height = (218 - crop_size) // 2
+        offset_width = (178 - crop_size) // 2
+        crop = lambda x: x[:, offset_height:offset_height + crop_size,
+                         offset_width:offset_width + crop_size]
+
+        transform = transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Lambda(crop),
+             transforms.ToPILImage(),
+             transforms.Scale(size=(re_size, re_size),
+                              interpolation=Image.BICUBIC),
+             transforms.ToTensor(),
+             transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)])
+
+        # wget https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets
+        # /celeba.zip
+        # Make sure to change to correct path!
+        imagenet_data = datasets.ImageFolder(dataset_directory,
+                                             transform=transform)
+        self.dataloader = torch.utils.data.DataLoader(imagenet_data,
+                                                      batch_size=NBATCH,
+                                                      shuffle=True,
+                                                      num_workers=0)
+
+        self.generator_network = GoodGenerator().to(device)
+        self.discriminator_network = GoodDiscriminator().to(device)
+
+        self.generator_optimizer = torch.optim.Adam(
+            self.generator_network.parameters(), lr=1e-5, betas=(0.5, .999))
+        self.discriminator_optimizer = torch.optim.Adam(
+            self.discriminator_network.parameters(), lr=1e-4,
+            betas=(0.5, .999))
+
+        self.epsilon = epsilon
+        self.tau = tau
+        self.output_directory = output_directory
+
+        # Fix latent samples for visualization purposes
+        self._source_samples_plot = torch.randn((5 * 5, DSOURCE)).type(dtype)
+
+    def dual_variable_transform(self, label_real: torch.Tensor,
+                                cost_matrix: torch.Tensor) -> torch.Tensor:
+        return c_e_tau_transform(label_real, cost_matrix,
+                                 epsilon=self.epsilon, tau=self.tau)
+
+    def objective_function(self, label_real: torch.Tensor,
+                           label_fake: torch.Tensor,
+                           cost_matrix: torch.Tensor) -> torch.Tensor:
+        return objective_unbalanced(label_real, label_fake, cost_matrix,
+                                    epsilon=self.epsilon, tau=self.tau)
+
+    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+                            steps: int, epochs: int) -> None:
+        NC = 3
+        IMGSIZE = 64
+
+        fig = plt.figure(figsize=(5, 5))
+        samples_plot = self.generator_network(
+            self._source_samples_plot).cpu().detach()
+        for k in range(5 * 5):
+            plt.subplot(5, 5, k + 1)
+            plt.xticks([])
+            plt.yticks([])
+            plt.grid(False)
+            imshow(samples_plot[k].reshape(NC, IMGSIZE, IMGSIZE))
+            plt.axis('off')
+        plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, bottom=0,
+                            top=1)
+
+        plt.savefig(os.path.join(
+            images_path, 'epoch_{}_step_{}.png'.format(epochs, steps)),
+            dpi=75)
+        plt.close(fig)
+
+
 def train_regularized_ot_GAN(
-        generator_network: torch.nn.Module,
-        discriminator_network: torch.nn.Module,
-        generator_optimizer: torch.optim.Optimizer,
-        discriminator_optimizer: torch.optim.Optimizer,
-        latent_dimension: int,
-        dual_variable_transform: Callable[[torch.Tensor, torch.Tensor],
-                                          torch.Tensor],
-        objective_function: Callable[
-            [torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
-        save_generated_data_callback: Callable[[torch.Tensor, str, int, int],
-                                               None],
-        dataloader: torch.utils.data.DataLoader,
-        output_directory: str,
+        configuration: ModelTrainingConfiguration,
         max_epochs: int,
         max_steps: Optional[int] = None,
         save_interval: int = 200,
         num_train_discriminator: int = 1) -> None:
 
-    p = 2
-    q = 2
+    p = configuration.p
+    q = configuration.q
 
-    device = next(generator_network.parameters()).device
+    device = next(configuration.generator_network.parameters()).device
 
-    images_path = os.path.join(output_directory, 'images')
-    models_path = os.path.join(output_directory, 'models')
+    images_path = os.path.join(configuration.output_directory, 'images')
+    models_path = os.path.join(configuration.output_directory, 'models')
 
-    os.makedirs(output_directory, exist_ok=True)
+    os.makedirs(configuration.output_directory, exist_ok=True)
     os.makedirs(images_path, exist_ok=True)
     os.makedirs(models_path, exist_ok=True)
 
@@ -93,7 +301,7 @@ def train_regularized_ot_GAN(
 
         while True:
             print(f"Epoch {epochs}")
-            for data in dataloader:
+            for data in configuration.dataloader:
                 yield data
 
             epochs += 1
@@ -110,44 +318,49 @@ def train_regularized_ot_GAN(
         data_real = data_real.reshape(batch_size, -1)
 
         with torch.no_grad():
-            z = torch.randn((batch_size, latent_dimension), device=device)
-            data_fake = generator_network(z).reshape(batch_size, -1)
+            z = torch.randn((batch_size, configuration.latent_dimension),
+                            device=device)
+            data_fake = configuration.generator_network(z).reshape(
+                batch_size, -1)
             C = lq_dist(data_fake, data_real)
 
         for _ in range(num_train_discriminator):
-            label_fake = discriminator_network(data_fake)
-            label_real = dual_variable_transform(label_fake, C)
+            label_fake = configuration.discriminator_network(data_fake)
+            label_real = configuration.dual_variable_transform(label_fake, C)
 
-            loss = -objective_function(label_real, label_fake, C)
+            loss = -configuration.objective_function(label_real, label_fake, C)
             print(f'Discriminator loss: {loss.item()}')
 
-            discriminator_optimizer.zero_grad()
+            configuration.discriminator_optimizer.zero_grad()
             loss.backward()
-            discriminator_optimizer.step()
+            configuration.discriminator_optimizer.step()
 
-        data_fake = generator_network(z).reshape(batch_size, -1)
+        data_fake = configuration.generator_network(z).reshape(batch_size, -1)
         C = lq_dist(data_fake, data_real)
 
-        label_fake = discriminator_network(data_fake)
-        label_real = dual_variable_transform(label_fake, C)
+        label_fake = configuration.discriminator_network(data_fake)
+        label_real = configuration.dual_variable_transform(label_fake, C)
 
-        loss = objective_function(label_real, label_fake, C)
+        loss = configuration.objective_function(label_real, label_fake, C)
         print(f'Generator loss: {loss.item()}')
 
-        generator_optimizer.zero_grad()
+        configuration.generator_optimizer.zero_grad()
         loss.backward()
-        generator_optimizer.step()
+        configuration.generator_optimizer.step()
 
         if steps % save_interval == 0 and steps > 0:
             print("Saving images and models")
-            save_generated_data_callback(data_fake, images_path, steps, epochs)
+            configuration.save_generated_data(data_fake, images_path,
+                                              steps, epochs)
 
-            torch.save(generator_network.state_dict(), os.path.join(
+            torch.save(configuration.generator_network.state_dict(),
+                       os.path.join(
                            models_path,
                            f'generator_step_{steps}_epoch_{epochs}.pt'))
-            torch.save(discriminator_network.state_dict(), os.path.join(
-                models_path,
-                f'discriminator_step_{steps}_epoch_{epochs}.pt'))
+            torch.save(configuration.discriminator_network.state_dict(),
+                       os.path.join(
+                           models_path,
+                           f'discriminator_step_{steps}_epoch_{epochs}.pt'))
 
         steps += 1
 
@@ -157,173 +370,34 @@ def train_regularized_ot_GAN(
 
 
 def train_mnist(args):
-    if torch.cuda.is_available():
-        print("Using CUDA")
-        device = torch.device('cuda')
-    else:
-        print("CUDA is not available, falling back to CPU")
-        device = torch.device('cpu')
+    eps = 1
+    tau = 100
 
-    batch_size = 128
-    latent_dim = 100
-    lr_generator = 0.0002
-    lr_discriminator = 1e-4
+    configuration = MnistConfiguration(args.dataset_dir, args.output_dir,
+                                       eps, tau)
 
     N_epochs = 10000
     N_critic = 1
-    epsilon = 1
-    tau = 100
-
-    # load data
-    dataloader = torch.utils.data.DataLoader(
-        datasets.MNIST(os.path.join(args.dataset_dir, 'mnist'),
-                       train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.5,), (0.5,))])),
-        batch_size=batch_size, shuffle=True, pin_memory=True)
-
-    img_dim = 28 * 28
-
-    # Initialize models and optimizers
-    generator = MnistGenerator(latent_dim, img_dim)
-    discriminator = MnistDiscriminator(img_dim)
-
-    generator.to(device)
-    discriminator.to(device)
-
-    optimizer_G = torch.optim.Adam(generator.parameters(),
-                                   lr=lr_generator)
-    optimizer_D = torch.optim.RMSprop(discriminator.parameters(),
-                                      lr=lr_discriminator)
-
-    def _c_epsilon_transform(y, C):
-        return c_e_transform(y, C, epsilon=epsilon)
-
-    def _c_epsilon_tau_transform(y, C):
-        return c_e_tau_transform(y, C, epsilon=epsilon, tau=tau)
-
-    def _objective(label_real, label_fake, C):
-        val0 = torch.mean(label_fake)
-        val1 = torch.mean(label_real)
-
-        tmp0 = (-C + (label_fake + torch.t(label_real)))
-        val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
-
-        val = val0 + val1 - val_reg
-        return val
-
-    def _objective_unbalanced(label_real, label_fake, C):
-        val_fake = tau * torch.mean(1 - torch.exp(-label_fake / tau))
-        val_real = tau * torch.mean(1 - torch.exp(-label_real / tau))
-
-        tmp0 = (-C + (label_fake + label_real.T))
-        val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
-
-        val = val_fake + val_real - val_reg
-        return val
-
-    def save_images(data_fake: torch.Tensor,
-                    images_path: str, steps: int, epochs: int):
-        save_image(data_fake[:25].reshape(-1, 1, 28, 28),
-                   os.path.join(images_path,
-                                'epoch_{}_step_{}.png'.format(epochs, steps)),
-                   nrow=5, normalize=True)
+    N_steps = 3000
 
     train_regularized_ot_GAN(
-        generator, discriminator, optimizer_G, optimizer_D,
-        latent_dim,
-        _c_epsilon_tau_transform, _objective_unbalanced,
-        # _c_epsilon_transform, _objective,
-        save_images, dataloader, args.output_dir,
-        max_epochs=N_epochs, max_steps=3000,
-        num_train_discriminator=N_critic,
-        save_interval=args.save_interval)
+        configuration, max_epochs=N_epochs, max_steps=N_steps,
+        num_train_discriminator=N_critic, save_interval=args.save_interval)
 
 
 def train_celeba(args):
-    torch.backends.cudnn.enabled = False
-    dtype = torch.cuda.FloatTensor
-    device = torch.cuda.current_device()
+    eps = 1
+    tau = 100
 
-    NC = 3
-    DSOURCE = 128
-    NBATCH = 64
-    IMGSIZE = 64
-
-    crop_size = 108
-    re_size = 64
-    offset_height = (218 - crop_size) // 2
-    offset_width = (178 - crop_size) // 2
-    crop = lambda x: x[:, offset_height:offset_height + crop_size, offset_width:offset_width + crop_size]
-
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-         transforms.Lambda(crop),
-         transforms.ToPILImage(),
-         transforms.Scale(size=(re_size, re_size), interpolation=Image.BICUBIC),
-         transforms.ToTensor(),
-         transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)])
-
-
-    # wget https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/celeba.zip
-    # Make sure to change to correct path!
-    imagenet_data = datasets.ImageFolder(args.dataset_dir,
-                                         transform=transform)
-    train_loader = torch.utils.data.DataLoader(imagenet_data,
-                                               batch_size=NBATCH,
-                                               shuffle=True,
-                                               num_workers=0)
-
-    g = GoodGenerator().to(device)
-    phi = GoodDiscriminator().to(device)
-
-    g_optim = torch.optim.Adam(g.parameters(), lr=1e-5, betas=(0.5, .999))
-    # phi_optim = torch.optim.Adam(phi.parameters(), lr = 1e-4, betas=(0.5, .999))
-    phi_optim = torch.optim.RMSprop(phi.parameters(), lr=1e-5)
-
-    source = lambda N: torch.randn((N, DSOURCE)).type(dtype)
-
-    # Fix latent samples for visualization purposes
-    source_samples_plot = source(5 * 5)
+    configuration = CelebaConfiguration(
+        args.dataset_dir, args.output_dir, eps, tau)
 
     N_epochs = 10000
     N_critic = 1
+    N_steps = 3000
 
-    epsilon = 1
-
-    def save_images(data_fake: torch.Tensor,
-                    images_path: str, steps: int, epochs: int):
-        fig = plt.figure(figsize=(5, 5))
-        samples_plot = g(source_samples_plot).cpu().detach()
-        for k in range(5 * 5):
-            plt.subplot(5, 5, k + 1)
-            plt.xticks([])
-            plt.yticks([])
-            plt.grid(False)
-            imshow(samples_plot[k].reshape(NC, IMGSIZE, IMGSIZE))
-            plt.axis('off')
-        plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, bottom=0,
-                            top=1)
-
-        plt.savefig(os.path.join(
-            images_path, 'epoch_{}_step_{}.png'.format(epochs, steps)),
-            dpi=75)
-        plt.close(fig)
-
-        # plt.show()
-
-    def _c_epsilon_transform(y, C):
-        return c_e_transform(y, C, epsilon=epsilon)
-
-    def _objective(label_real, label_fake, C):
-        return objective(label_fake, label_real, C, epsilon=epsilon)
-
-    train_regularized_ot_GAN(g, phi, g_optim, phi_optim, DSOURCE,
-                             _c_epsilon_transform, _objective,
-                             save_images, train_loader,
-                             args.output_dir,
-                             max_epochs=N_epochs, max_steps=3000,
+    train_regularized_ot_GAN(configuration,
+                             max_epochs=N_epochs, max_steps=N_steps,
                              num_train_discriminator=N_critic,
                              save_interval=args.save_interval)
 
