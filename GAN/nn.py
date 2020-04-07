@@ -1,60 +1,5 @@
-import os
-
-import numpy as np
-
-import matplotlib.pyplot as plt
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import torch.autograd as autograd
-
-import PIL.Image as Image
-
-import torchvision
-from torchvision import datasets, transforms
-
-from torch.autograd import grad
-import functools
-
-torch.backends.cudnn.enabled = False
-dtype = torch.cuda.FloatTensor
-device = torch.cuda.current_device()
-print(torch.cuda.get_device_name(device))
-
-# dtype = torch.FloatTensor
-# device = 'cpu'
-
-NC = 3
-DSOURCE = 128
-NBATCH = 64
-IMGSIZE = 64
-
-crop_size = 108
-re_size = 64
-offset_height = (218 - crop_size) // 2
-offset_width = (178 - crop_size) // 2
-crop = lambda x: x[:, offset_height:offset_height + crop_size, offset_width:offset_width + crop_size]
-
-transform = transforms.Compose(
-    [transforms.ToTensor(),
-     transforms.Lambda(crop),
-     transforms.ToPILImage(),
-     transforms.Scale(size=(re_size, re_size), interpolation=Image.BICUBIC),
-     transforms.ToTensor(),
-     transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)])
-
-
-# wget https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/celeba.zip
-# Make sure to change to correct path!
-imagenet_data = datasets.ImageFolder('/home/lorian/Thesis-data/',
-                                     transform=transform)
-train_loader = torch.utils.data.DataLoader(imagenet_data,
-                                           batch_size=NBATCH,
-                                           shuffle=True,
-                                           num_workers=4)
-
 
 
 DIM = 64
@@ -67,8 +12,8 @@ class MyConvo2d(nn.Module):
         super(MyConvo2d, self).__init__()
         self.he_init = he_init
         self.padding = int((kernel_size - 1) / 2)
-        self.conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1,
-                              padding=self.padding, bias=bias)
+        self.conv = nn.Conv2d(input_dim, output_dim, kernel_size,
+                              stride=stride, padding=self.padding, bias=bias)
 
     def forward(self, input):
         output = self.conv(input)
@@ -347,180 +292,64 @@ class WorseDiscriminator(nn.Module):
         return out
 
 
-def imshow(img):
-    img = img / 2 + 0.5  # unnormalize
-    npimg = img.numpy()
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+class MnistGenerator(nn.Module):
+    def __init__(self, latent_dim, output_dim):
+        super().__init__()
+
+        # Construct generator. You are free to experiment with your model,
+        # but the following is a good start:
+        #   Linear args.latent_dim -> 128
+        #   LeakyReLU(0.2)
+        #   Linear 128 -> 256
+        #   Bnorm
+        #   LeakyReLU(0.2)
+        #   Linear 256 -> 512
+        #   Bnorm
+        #   LeakyReLU(0.2)
+        #   Linear 512 -> 1024
+        #   Bnorm
+        #   LeakyReLU(0.2)
+        #   Linear 1024 -> 784
+        #   Output non-linearity
+
+        self.model = nn.Sequential(
+            nn.Linear(latent_dim, 128),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.5),
+            nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.5),
+            nn.Linear(256, 512),
+            nn.BatchNorm1d(512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 1024),
+            nn.Dropout(0.5),
+            nn.BatchNorm1d(1024),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.5),
+            nn.Linear(1024, output_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        # Generate images from z
+        return self.model(z)
 
 
-# -------------For WGAN------------
-def dist(x, y=None, q=2, p=1):
-    Nx = x.shape[0]
-    if y is None:
-        y = x
-    Ny = y.shape[0]
+class MnistDiscriminator(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
 
-    # Lq norm
-    D = torch.norm(x.contiguous().view(Nx, -1)[:, None]
-                   - y.contiguous().view(Ny, -1), dim=2, p=q)
-    return (D) ** (p) / p
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 1)
+        )
 
-
-def objective(y0, y1, C, epsilon=1):
-    val0 = torch.mean(y0)
-    val1 = torch.mean(y1)
-
-    tmp0 = (-C + (y0 + torch.t(y1)))
-    val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
-
-    val = val0 + val1 - val_reg
-    return val
-
-
-def c_transform(y, C, epsilon=1):
-    return softmin((C - y), epsilon=epsilon)[:None]
-
-
-def softmin(X, epsilon=1):
-    Y = -X / epsilon
-    Ymax = torch.max(Y, 0)[0][:, None]
-    return -epsilon * (
-                Ymax + torch.log(torch.mean(torch.exp(Y - Ymax.t()), 0))[:,
-                       None])
-
-
-def sinkhorn(a, b, C, epsilon=1):
-    n = len(a)
-    m = len(b)
-
-    u0 = (torch.ones((n, 1)) / n).type(dtype)
-    v0 = (torch.ones((m, 1)) / m).type(dtype)
-    K = torch.exp(-epsilon * C)
-
-    gamma = u0 * K * (v0.t())
-    gamma = gamma / torch.sum(gamma)
-
-    k = 0
-    while (k < 5):
-        k += 1
-        u1 = a / (K @ v0)
-        v1 = b / (K.t() @ u1)
-
-        u0 = u1
-        v0 = v1
-
-        gamma = u1 * K * (v1.t())
-
-    return gamma  # np.sqrt(torch.sum(gamma*C)),gamma.view(-1)
-
-
-g = GoodGenerator().to(device)
-phi = GoodDiscriminator().to(device)
-
-g_optim = torch.optim.Adam(g.parameters(), lr=1e-5, betas=(0.5, .999))
-# phi_optim = torch.optim.Adam(phi.parameters(), lr = 1e-4, betas=(0.5, .999))
-phi_optim = torch.optim.RMSprop(phi.parameters(), lr=1e-5)
-
-source = lambda N: torch.randn((N, DSOURCE)).type(dtype)
-
-N_epochs = 10000
-N_critic = 1
-
-p = 2
-q = 2
-
-weights = (torch.ones((NBATCH, 1)) / NBATCH).type(dtype)
-
-# cost = lambda x, y: dist_pq(x, y, p=p, q=q)
-
-epsilon = 1
-
-w_hist = []
-k_iter = 0
-k_img = 0
-endit = False
-
-# Fix latent samples for visualization purposes
-source_samples_plot = source(5 * 5)
-
-# Start training
-for i in range(N_epochs):
-    if endit == True:
-        break
-    for x_real, _ in train_loader:
-        if x_real.shape[0] is not NBATCH:
-            break
-        x_real = x_real.type(dtype)
-
-        phi_optim.zero_grad()
-        g_optim.zero_grad()
-
-        # x_real are real samples, now sample from the model (x_fake),
-        # and compute the cost matrix C for the c-transform
-        with torch.no_grad():
-            samples = source(NBATCH)
-            x_fake = g(samples)
-            C = dist(x_fake, x_real, p=p, q=q)
-
-        # Train the discriminator
-        for j in range(N_critic):
-            y_fake = phi(x_fake)
-            y_real = c_transform(y_fake, C, epsilon=epsilon)
-
-            loss = -objective(y_fake, y_real, C, epsilon=epsilon)
-
-            print(loss)
-
-            loss.backward()
-
-
-            phi_optim.step()
-            phi_optim.zero_grad()
-
-        g_optim.zero_grad()
-
-        # Train the generator
-        x_fake = g(samples)
-
-        C = dist(x_fake, x_real, p=p, q=q)
-
-        y_fake = phi(x_fake)
-        y_real = c_transform(y_fake, C, epsilon=epsilon)
-
-        loss = objective(y_fake, y_real, C, epsilon=epsilon)
-        print(loss)
-        loss.backward()
-
-        g_optim.step()
-        g_optim.zero_grad()
-
-        # print('%0.1f' % float(loss), end=', ')
-        # if k_iter % 10 == 0 and k_iter > 0:
-        #    print('\n')
-        # w_hist.append(loss)
-
-        if k_iter % 200 == 0 and k_iter > 0:
-            k_img += 1
-            fig = plt.figure(figsize=(5, 5))
-            samples_plot = g(source_samples_plot).detach()
-            for k in range(5 * 5):
-                plt.subplot(5, 5, k + 1)
-                plt.xticks([])
-                plt.yticks([])
-                plt.grid(False)
-                imshow(samples_plot[k].cpu().reshape(NC, IMGSIZE, IMGSIZE))
-                plt.axis('off')
-            plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, bottom=0,
-                                top=1)
-
-            plt.savefig('images_sinkhorn_gan_augusto/fig%03d.png' % k_img, dpi=75)
-            plt.close(fig)
-            # plt.show()
-
-            print('%dth Epoc done' % i)
-            print('Iterations: ', k_iter)
-            print('loss:', float(loss))
-        k_iter += 1
-        if k_iter > 300000:
-            endit = True
+    def forward(self, img):
+        # return discriminator score for img
+        return self.model(img)
 
