@@ -34,7 +34,7 @@ def dist(x, y=None, q=2, p=1):
 
 
 def objective_balanced(label_real: torch.Tensor, label_fake: torch.Tensor,
-              C: torch.Tensor, epsilon: float) -> torch.Tensor:
+                       C: torch.Tensor, epsilon: float) -> torch.Tensor:
     val0 = torch.mean(label_fake)
     val1 = torch.mean(label_real)
 
@@ -93,6 +93,8 @@ class ModelTrainingConfiguration(ABC):
     q: float
     p: float
 
+    subtract_ot_bias: bool = False
+
     @abstractmethod
     def dual_variable_transform(
             self, label_real: torch.Tensor,
@@ -129,6 +131,8 @@ class MnistConfiguration(ModelTrainingConfiguration):
 
         self.latent_dimension = 100
         self.output_directory = output_directory
+
+        self.subtract_ot_bias = True
 
         batch_size = 128
         lr_generator = 0.0002
@@ -296,6 +300,10 @@ def train_regularized_ot_GAN(
     steps = 0
     epochs = 0
 
+    cost_matrix_cross: torch.Tensor
+    cost_matrix_real: torch.Tensor
+    cost_matrix_fake: torch.Tensor
+
     def data_iterator() -> Iterator[torch.Tensor]:
         nonlocal epochs
 
@@ -306,8 +314,43 @@ def train_regularized_ot_GAN(
 
             epochs += 1
 
-    def lq_dist(x, y):
+    def lq_dist(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return (torch.norm(x.unsqueeze(1) - y, dim=2, p=q) ** p) / q
+
+    def compute_cost_matrices(data_real: torch.Tensor,
+                              data_fake: torch.Tensor):
+        nonlocal cost_matrix_cross
+        nonlocal cost_matrix_real
+        nonlocal cost_matrix_fake
+
+        cost_matrix_cross = lq_dist(data_fake, data_real)
+
+        if configuration.subtract_ot_bias:
+            cost_matrix_real = lq_dist(data_real, data_real)
+            cost_matrix_fake = lq_dist(data_fake, data_fake)
+
+    def get_loss() -> torch.Tensor:
+        label_fake = configuration.discriminator_network(data_fake)
+        label_real = configuration.discriminator_network(data_real)
+
+        label_real_transformed_fake = configuration.dual_variable_transform(
+            label_fake, cost_matrix_cross)
+
+        loss_val = configuration.objective_function(
+            label_real_transformed_fake, label_fake, cost_matrix_cross)
+        if configuration.subtract_ot_bias:
+            label_real_transformed = configuration.dual_variable_transform(
+                label_real, cost_matrix_real)
+            label_fake_transformed = configuration.dual_variable_transform(
+                label_fake, cost_matrix_fake)
+            bias_real = configuration.objective_function(
+                label_real, label_real_transformed, cost_matrix_real)
+            bias_fake = configuration.objective_function(
+                label_fake, label_fake_transformed, cost_matrix_fake)
+
+            loss_val -= 0.5 * (bias_real + bias_fake)
+
+        return loss_val
 
     data_it = data_iterator()
     while epochs < max_epochs:
@@ -322,13 +365,12 @@ def train_regularized_ot_GAN(
                             device=device)
             data_fake = configuration.generator_network(z).reshape(
                 batch_size, -1)
-            C = lq_dist(data_fake, data_real)
+
+            compute_cost_matrices(data_real, data_fake)
 
         for _ in range(num_train_discriminator):
-            label_fake = configuration.discriminator_network(data_fake)
-            label_real = configuration.dual_variable_transform(label_fake, C)
+            loss = -get_loss()
 
-            loss = -configuration.objective_function(label_real, label_fake, C)
             print(f'Discriminator loss: {loss.item()}')
 
             configuration.discriminator_optimizer.zero_grad()
@@ -336,12 +378,11 @@ def train_regularized_ot_GAN(
             configuration.discriminator_optimizer.step()
 
         data_fake = configuration.generator_network(z).reshape(batch_size, -1)
-        C = lq_dist(data_fake, data_real)
 
-        label_fake = configuration.discriminator_network(data_fake)
-        label_real = configuration.dual_variable_transform(label_fake, C)
+        compute_cost_matrices(data_real, data_fake)
 
-        loss = configuration.objective_function(label_real, label_fake, C)
+        loss = get_loss()
+
         print(f'Generator loss: {loss.item()}')
 
         configuration.generator_optimizer.zero_grad()
