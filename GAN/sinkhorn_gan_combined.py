@@ -42,6 +42,7 @@ def objective_balanced(label_real: torch.Tensor, label_fake: torch.Tensor,
     val_reg = epsilon * torch.mean(torch.exp(tmp0 / epsilon))
 
     val = val0 + val1 - val_reg
+
     return val
 
 
@@ -76,8 +77,8 @@ def softmin(X: torch.tensor, epsilon: float = 1) -> torch.Tensor:
     Y = -X / epsilon
     Ymax = torch.max(Y, 0)[0][:, None]
     return -epsilon * (
-                Ymax + torch.log(torch.mean(torch.exp(Y - Ymax.t()), 0))[:,
-                       None])
+            Ymax + torch.log(torch.mean(torch.exp(Y - Ymax.t()), 0))[:,
+                   None])
 
 
 class ModelTrainingConfiguration(ABC):
@@ -113,15 +114,41 @@ class ModelTrainingConfiguration(ABC):
         pass
 
 
-class MnistConfiguration(ModelTrainingConfiguration):
+class BalancedEntropyConfigurationBase(ModelTrainingConfiguration, ABC):
+    epsilon: float
+
+    def dual_variable_transform(self, label_real: torch.Tensor,
+                                cost_matrix: torch.Tensor) -> torch.Tensor:
+        return c_e_transform(label_real, cost_matrix, epsilon=self.epsilon)
+
+    def objective_function(self, label_real: torch.Tensor,
+                           label_fake: torch.Tensor,
+                           cost_matrix: torch.Tensor) -> torch.Tensor:
+        return objective_balanced(label_real, label_fake, cost_matrix,
+                                  epsilon=self.epsilon)
+
+
+class UnbalancedEntropyConfigurationBase(ModelTrainingConfiguration, ABC):
     epsilon: float
     tau: float
 
+    def dual_variable_transform(self, label_real: torch.Tensor,
+                                cost_matrix: torch.Tensor) -> torch.Tensor:
+        return c_e_tau_transform(label_real, cost_matrix,
+                                 epsilon=self.epsilon, tau=self.tau)
+
+    def objective_function(self, label_real: torch.Tensor,
+                           label_fake: torch.Tensor,
+                           cost_matrix: torch.Tensor) -> torch.Tensor:
+        return objective_unbalanced(label_real, label_fake, cost_matrix,
+                                    epsilon=self.epsilon, tau=self.tau)
+
+
+class MnistConfigurationBase(ModelTrainingConfiguration, ABC):
     p = 2
     q = 2
 
-    def __init__(self, dataset_dir: str, output_directory: str,
-                 epsilon: float, tau: float):
+    def __init__(self, dataset_dir: str, output_directory: str):
         if torch.cuda.is_available():
             print("Using CUDA")
             device = torch.device('cuda')
@@ -132,14 +159,11 @@ class MnistConfiguration(ModelTrainingConfiguration):
         self.latent_dimension = 100
         self.output_directory = output_directory
 
-        self.subtract_ot_bias = True
+        # self.subtract_ot_bias = True
 
         batch_size = 128
         lr_generator = 0.0002
         lr_discriminator = 1e-4
-
-        self.epsilon = epsilon
-        self.tau = tau
 
         # load data
         self.dataloader = torch.utils.data.DataLoader(
@@ -162,17 +186,6 @@ class MnistConfiguration(ModelTrainingConfiguration):
         self.discriminator_optimizer = torch.optim.RMSprop(
             self.discriminator_network.parameters(), lr=lr_discriminator)
 
-    def dual_variable_transform(self, label_real: torch.Tensor,
-                                cost_matrix: torch.Tensor) -> torch.Tensor:
-        return c_e_tau_transform(label_real, cost_matrix,
-                                 epsilon=self.epsilon, tau=self.tau)
-
-    def objective_function(self, label_real: torch.Tensor,
-                           label_fake: torch.Tensor,
-                           cost_matrix: torch.Tensor) -> torch.Tensor:
-        return objective_unbalanced(label_real, label_fake, cost_matrix,
-                                    epsilon=self.epsilon, tau=self.tau)
-
     def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
                             steps: int, epochs: int) -> None:
         save_image(data_fake[:25].reshape(-1, 1, 28, 28),
@@ -181,17 +194,32 @@ class MnistConfiguration(ModelTrainingConfiguration):
                    nrow=5, normalize=True)
 
 
-class CelebaConfiguration(ModelTrainingConfiguration):
-    epsilon: float
-    tau: float
+class MnistBalancedConfiguration(MnistConfigurationBase,
+                                 BalancedEntropyConfigurationBase):
+    def __init__(self, dataset_dir: str, output_directory: str,
+                 epsilon: float):
+        MnistConfigurationBase.__init__(self, dataset_dir, output_directory)
 
+        self.epsilon = epsilon
+
+
+class MnistUnbalancedConfiguration(MnistConfigurationBase,
+                                   UnbalancedEntropyConfigurationBase):
+    def __init__(self, dataset_dir: str, output_directory: str,
+                 epsilon: float, tau: float):
+        MnistConfigurationBase.__init__(self, dataset_dir, output_directory)
+
+        self.epsilon = epsilon
+        self.tau = tau
+
+
+class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
     p = 2
     q = 2
 
     _source_samples_plot: torch.Tensor
 
-    def __init__(self, dataset_directory: str, output_directory: str,
-                 epsilon: float, tau: float):
+    def __init__(self, dataset_directory: str, output_directory: str):
         torch.backends.cudnn.enabled = False
         dtype = torch.cuda.FloatTensor
         device = torch.cuda.current_device()
@@ -236,23 +264,10 @@ class CelebaConfiguration(ModelTrainingConfiguration):
             self.discriminator_network.parameters(), lr=1e-4,
             betas=(0.5, .999))
 
-        self.epsilon = epsilon
-        self.tau = tau
         self.output_directory = output_directory
 
         # Fix latent samples for visualization purposes
         self._source_samples_plot = torch.randn((5 * 5, DSOURCE)).type(dtype)
-
-    def dual_variable_transform(self, label_real: torch.Tensor,
-                                cost_matrix: torch.Tensor) -> torch.Tensor:
-        return c_e_tau_transform(label_real, cost_matrix,
-                                 epsilon=self.epsilon, tau=self.tau)
-
-    def objective_function(self, label_real: torch.Tensor,
-                           label_fake: torch.Tensor,
-                           cost_matrix: torch.Tensor) -> torch.Tensor:
-        return objective_unbalanced(label_real, label_fake, cost_matrix,
-                                    epsilon=self.epsilon, tau=self.tau)
 
     def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
                             steps: int, epochs: int) -> None:
@@ -278,13 +293,31 @@ class CelebaConfiguration(ModelTrainingConfiguration):
         plt.close(fig)
 
 
+class CelebaBalancedConfiguration(CelebaConfigurationBase,
+                                  BalancedEntropyConfigurationBase):
+    def __init__(self, dataset_dir: str, output_directory: str,
+                 epsilon: float):
+        CelebaConfigurationBase.__init__(self, dataset_dir, output_directory)
+
+        self.epsilon = epsilon
+
+
+class CelebaUnbalancedConfiguration(CelebaConfigurationBase,
+                                    UnbalancedEntropyConfigurationBase):
+    def __init__(self, dataset_dir: str, output_directory: str,
+                 epsilon: float, tau: float):
+        CelebaConfigurationBase.__init__(self, dataset_dir, output_directory)
+
+        self.epsilon = epsilon
+        self.tau = tau
+
+
 def train_regularized_ot_GAN(
         configuration: ModelTrainingConfiguration,
         max_epochs: int,
         max_steps: Optional[int] = None,
         save_interval: int = 200,
         num_train_discriminator: int = 1) -> None:
-
     p = configuration.p
     q = configuration.q
 
@@ -348,6 +381,9 @@ def train_regularized_ot_GAN(
             bias_fake = configuration.objective_function(
                 label_fake, label_fake_transformed, cost_matrix_fake)
 
+            # print(bias_real.item())
+            # print(bias_fake.item())
+
             loss_val -= 0.5 * (bias_real + bias_fake)
 
         return loss_val
@@ -405,17 +441,21 @@ def train_regularized_ot_GAN(
 
         steps += 1
 
-        if max_steps and steps >= max_steps:
+        if max_steps and steps > max_steps:
             print("Reached maximum amount of steps. Quitting.")
             break
 
 
 def train_mnist(args):
-    eps = 1
-    tau = 100
+    eps = args.epsilon
+    tau = args.tau
 
-    configuration = MnistConfiguration(args.dataset_dir, args.output_dir,
-                                       eps, tau)
+    if args.ot_type == 'unbalanced':
+        configuration = MnistUnbalancedConfiguration(
+            args.dataset_dir, args.output_dir, eps, tau)
+    else:
+        configuration = MnistBalancedConfiguration(
+            args.dataset_dir, args.output_dir, eps)
 
     N_epochs = 10000
     N_critic = 1
@@ -427,11 +467,15 @@ def train_mnist(args):
 
 
 def train_celeba(args):
-    eps = 1
-    tau = 100
+    eps = args.epsilon
+    tau = args.tau
 
-    configuration = CelebaConfiguration(
-        args.dataset_dir, args.output_dir, eps, tau)
+    if args.ot_type == 'unbalanced':
+        configuration = CelebaUnbalancedConfiguration(
+            args.dataset_dir, args.output_dir, eps, tau)
+    else:
+        configuration = CelebaBalancedConfiguration(
+            args.dataset_dir, args.output_dir, eps)
 
     N_epochs = 10000
     N_critic = 1
@@ -451,17 +495,22 @@ def main():
                         help="Directory to save images and models to.")
     parser.add_argument('--save-interval', type=int, default=200, metavar='S',
                         help="Save images and models every S steps.")
-    parser.add_argument('--type', required=True, choices=['mnist', 'celeba'],
-                        help='Selects which dataset/architecture '
-                             'combination to use.')
+    parser.add_argument('--dataset', required=True, choices=[
+        'mnist', 'celeba'], help='Selects which dataset type to use.')
+    parser.add_argument('--ot-type', required=True, choices=[
+        'balanced', 'unbalanced'], help='Selects which OT type to use.')
+    parser.add_argument('--epsilon', default=1, type=float)
+    parser.add_argument('--tau', default=100, type=float)
 
     args = parser.parse_args()
 
-    if args.type == 'mnist':
+    print(f"eps={args.epsilon} tau={args.tau}")
+
+    if args.dataset == 'mnist':
         train_mnist(args)
     else:
         train_celeba(args)
 
 
 if __name__ == "__main__":
-    main();
+    main()
