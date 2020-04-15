@@ -478,7 +478,7 @@ def train_celeba(args):
 
     N_epochs = 10000
     N_critic = 1
-    N_steps = 3000
+    N_steps = 3000000
 
     train_regularized_ot_GAN(configuration,
                              max_epochs=N_epochs, max_steps=N_steps,
