@@ -220,7 +220,6 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
     _source_samples_plot: torch.Tensor
 
     def __init__(self, dataset_directory: str, output_directory: str):
-        torch.backends.cudnn.enabled = False
         dtype = torch.cuda.FloatTensor
         device = torch.cuda.current_device()
 

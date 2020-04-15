@@ -73,7 +73,7 @@ class DepthToSpace(nn.Module):
         output = torch.stack(stacks, 0).transpose(0, 1).permute(0, 2, 1, 3,
                                                                 4).reshape(
             batch_size, output_height, output_width, output_depth)
-        output = output.permute(0, 3, 1, 2)
+        output = output.permute(0, 3, 1, 2).contiguous()
         return output
 
 
