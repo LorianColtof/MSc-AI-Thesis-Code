@@ -1,6 +1,7 @@
 import os
+import re
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Iterator
+from typing import Optional, Iterator, Tuple
 import argparse
 
 import numpy as np
@@ -311,6 +312,66 @@ class CelebaUnbalancedConfiguration(CelebaConfigurationBase,
         self.tau = tau
 
 
+def load_checkpoints(configuration: ModelTrainingConfiguration,
+                     models_path: str) -> Tuple[int, int]:
+    print("Loading checkpoints")
+
+    file_regex = re.compile(
+        r'(discriminator|generator)_step_(\d+)_epoch_(\d+).pt')
+
+    files = os.listdir(models_path)
+    discriminator_checkpoints = {}
+    generator_checkpoints = {}
+
+    for file in files:
+        match = file_regex.match(file)
+        if not match:
+            continue
+
+        _type = match.group(1)
+        step = int(match.group(2))
+        epoch = int(match.group(3))
+
+        if _type == 'discriminator':
+            discriminator_checkpoints[step] = (file, epoch)
+        else:
+            generator_checkpoints[step] = (file, epoch)
+
+    if not discriminator_checkpoints or not generator_checkpoints:
+        print("No checkpoints available to load.")
+        return 0, 0
+
+    max_step_discriminator = max(discriminator_checkpoints.keys())
+    max_step_generator = max(discriminator_checkpoints.keys())
+
+    load_step: int
+
+    if max_step_discriminator != max_step_generator:
+        print("WARNING: found generator and discriminator checkpoints "
+              "at different steps")
+        load_step = min(max_step_discriminator, max_step_generator)
+    else:
+        load_step = max_step_discriminator
+
+    load_epoch = discriminator_checkpoints[load_step][1]
+
+    generator_checkpoint_path = os.path.join(
+        models_path, generator_checkpoints[load_step][0])
+    configuration.generator_network.load_state_dict(
+        torch.load(generator_checkpoint_path))
+    configuration.generator_network.train()
+
+    discriminator_checkpoint_path = os.path.join(
+        models_path, discriminator_checkpoints[load_step][0])
+    configuration.discriminator_network.load_state_dict(
+        torch.load(discriminator_checkpoint_path))
+    configuration.discriminator_network.train()
+
+    print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
+
+    return load_step + 1, load_epoch
+
+
 def train_regularized_ot_GAN(
         configuration: ModelTrainingConfiguration,
         max_epochs: int,
@@ -329,8 +390,7 @@ def train_regularized_ot_GAN(
     os.makedirs(images_path, exist_ok=True)
     os.makedirs(models_path, exist_ok=True)
 
-    steps = 0
-    epochs = 0
+    steps, epochs = load_checkpoints(configuration, models_path)
 
     cost_matrix_cross: torch.Tensor
     cost_matrix_real: torch.Tensor
