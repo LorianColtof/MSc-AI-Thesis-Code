@@ -516,13 +516,11 @@ def train_mnist(args):
         configuration = MnistBalancedConfiguration(
             args.dataset_dir, args.output_dir, eps)
 
-    N_epochs = 10000
-    N_critic = 1
-    N_steps = 3000
-
-    train_regularized_ot_GAN(
-        configuration, max_epochs=N_epochs, max_steps=N_steps,
-        num_train_discriminator=N_critic, save_interval=args.save_interval)
+    train_regularized_ot_GAN(configuration,
+                             max_epochs=args.max_epochs,
+                             max_steps=args.max_steps,
+                             num_train_discriminator=args.critic_steps,
+                             save_interval=args.save_interval)
 
 
 def train_celeba(args):
@@ -536,13 +534,10 @@ def train_celeba(args):
         configuration = CelebaBalancedConfiguration(
             args.dataset_dir, args.output_dir, eps)
 
-    N_epochs = 10000
-    N_critic = 1
-    N_steps = 3000000
-
     train_regularized_ot_GAN(configuration,
-                             max_epochs=N_epochs, max_steps=N_steps,
-                             num_train_discriminator=N_critic,
+                             max_epochs=args.max_epochs,
+                             max_steps=args.max_steps,
+                             num_train_discriminator=args.critic_steps,
                              save_interval=args.save_interval)
 
 
@@ -554,10 +549,20 @@ def main():
                         help="Directory to save images and models to.")
     parser.add_argument('--save-interval', type=int, default=200, metavar='S',
                         help="Save images and models every S steps.")
+
     parser.add_argument('--dataset', required=True, choices=[
         'mnist', 'celeba'], help='Selects which dataset type to use.')
     parser.add_argument('--ot-type', required=True, choices=[
         'balanced', 'unbalanced'], help='Selects which OT type to use.')
+    parser.add_argument('--max-epochs', type=int, default=10000,
+                        help='Maximum number of epochs to train.')
+    parser.add_argument('--max-steps', type=int, default=30000,
+                        help='Maximum number of steps to train.')
+    parser.add_argument('--critic-steps', type=int, default=1,
+                        help='Number of that the critic is trained '
+                             'each iteration.')
+
+    # Hyperparameters
     parser.add_argument('--epsilon', default=1, type=float)
     parser.add_argument('--tau', default=100, type=float)
 
