@@ -1,6 +1,10 @@
+import math
+from typing import Tuple, Any, Dict
+
 import torch
 import torch.nn as nn
 
+from configuration import Configuration
 
 DIM = 64
 OUTPUT_DIM = 64  # 64*64*3
@@ -196,11 +200,15 @@ class FCGenerator(nn.Module):
 
 
 class GoodGenerator(nn.Module):
-    def __init__(self, dim=DIM, output_dim=OUTPUT_DIM):
+    def __init__(self, latent_dim=DIM, output_dim=OUTPUT_DIM):
         super(GoodGenerator, self).__init__()
 
-        self.dim = dim
-        self.output_dim = output_dim
+        output_dim_sqrt = int(math.sqrt(output_dim))
+        if output_dim_sqrt ** 2 != output_dim:
+            raise Exception("output_dim is not a square")
+
+        self.dim = latent_dim
+        self.output_dim = output_dim_sqrt
 
         self.ln1 = nn.Linear(128, 4 * 4 * 8 * self.dim)
         self.rb1 = ResidualBlock(8 * self.dim, 8 * self.dim, 3, resample='up')
@@ -230,10 +238,14 @@ class GoodGenerator(nn.Module):
 
 
 class GoodDiscriminator(nn.Module):
-    def __init__(self, dim=DIM):
+    def __init__(self, input_dim=DIM):
         super(GoodDiscriminator, self).__init__()
 
-        self.dim = dim
+        input_dim_sqrt = int(math.sqrt(input_dim))
+        if input_dim_sqrt ** 2 != input_dim:
+            raise Exception("output_dim is not a square")
+
+        self.dim = input_dim_sqrt
 
         self.conv1 = MyConvo2d(3, self.dim, 3, he_init=False)
         self.rb1 = ResidualBlock(self.dim, 2 * self.dim, 3, resample='down',
@@ -353,3 +365,27 @@ class MnistDiscriminator(nn.Module):
         # return discriminator score for img
         return self.model(img)
 
+
+_models = {
+    'MnistGenerator': MnistGenerator,
+    'MnistDiscriminator': MnistDiscriminator,
+    'GoodGenerator': GoodGenerator,
+    'GoodDiscriminator': GoodDiscriminator
+}
+
+
+def load_models(config: Configuration,
+                generator_kwargs: Dict[str, Any],
+                discriminator_kwargs: Dict[str, Any]) \
+        -> Tuple[nn.Module, nn.Module]:
+    try:
+        generator = _models[config.models.generator.type]
+        discriminator = _models[config.models.discriminator.type]
+    except KeyError as e:
+        raise Exception(f"Model '{e.args[0]}' does not exist")
+
+    generator_kwargs.update(config.models.generator.options)
+    discriminator_kwargs.update(config.models.discriminator.options)
+
+    return (generator(**generator_kwargs),
+            discriminator(**discriminator_kwargs))

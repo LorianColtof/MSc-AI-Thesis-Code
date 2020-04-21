@@ -1,8 +1,7 @@
 import torch
-import matplotlib.pyplot as plt
 from torchvision.utils import save_image
 
-from gan import Generator
+from other_gans.gan import Generator
 
 
 @torch.no_grad()

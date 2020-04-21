@@ -1,18 +1,23 @@
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Optional, Iterator, Tuple
+from typing import Optional, Iterator, Tuple, Type
 import argparse
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+from torch.nn import Parameter
+from torch.optim import Optimizer
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 import PIL.Image as Image
+from ot.smooth import smooth_ot_dual
 
-from nn import GoodGenerator, GoodDiscriminator, \
+import models
+from models import GoodGenerator, GoodDiscriminator, \
     MnistGenerator, MnistDiscriminator
+import configuration
 
 
 def imshow(img):
@@ -82,16 +87,39 @@ def softmin(X: torch.tensor, epsilon: float = 1) -> torch.Tensor:
                    None])
 
 
-class ModelTrainingConfiguration(ABC):
-    generator_network: torch.nn.Module
-    discriminator_network: torch.nn.Module
-    generator_optimizer: torch.optim.Optimizer
-    discriminator_optimizer: torch.optim.Optimizer
+def load_optimizers(config: configuration.Configuration,
+                    generator_params: Iterator[Parameter],
+                    discriminator_params: Iterator[Parameter]) \
+        -> Tuple[Optimizer, Optimizer]:
 
+    try:
+        generator_optimizer: Type[Optimizer] = getattr(
+            torch.optim, config.optimizers.generator.type)
+    except AttributeError:
+        raise Exception(
+            f"Optimizer type '{config.optimizers.generator.type}' "
+            "does not exist.")
+
+    try:
+        discriminator_optimizer: Type[Optimizer] = getattr(
+            torch.optim, config.optimizers.discriminator.type)
+    except AttributeError:
+        raise Exception(
+            f"Optimizer type '{config.optimizers.discriminator.type}' "
+            "does not exist.")
+
+    return (generator_optimizer(params=generator_params,
+                                **config.optimizers.generator.options),
+            discriminator_optimizer(params=discriminator_params,
+                                    **config.optimizers.discriminator.options))
+
+
+class ModelTrainingConfiguration(ABC):
     dataloader: torch.utils.data.DataLoader
-    output_directory: str
 
     latent_dimension: int
+    data_dimension: int
+
     q: float
     p: float
 
@@ -110,13 +138,19 @@ class ModelTrainingConfiguration(ABC):
         pass
 
     @abstractmethod
-    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+    def save_generated_data(self, generator_network: torch.nn.Module,
+                            data_fake: torch.Tensor, images_path: str,
                             steps: int, epochs: int) -> None:
         pass
 
 
 class BalancedEntropyConfigurationBase(ModelTrainingConfiguration, ABC):
     epsilon: float
+    gamma: float
+
+    def __init__(self, config: configuration.Configuration):
+        self.epsilon = config.loss.options['epsilon']
+        self.gamma = 1 / self.epsilon
 
     def dual_variable_transform(self, label_real: torch.Tensor,
                                 cost_matrix: torch.Tensor) -> torch.Tensor:
@@ -132,6 +166,10 @@ class BalancedEntropyConfigurationBase(ModelTrainingConfiguration, ABC):
 class UnbalancedEntropyConfigurationBase(ModelTrainingConfiguration, ABC):
     epsilon: float
     tau: float
+
+    def __init__(self, config: configuration.Configuration):
+        self.epsilon = config.loss.options['epsilon']
+        self.tau = config.loss.options['tau']
 
     def dual_variable_transform(self, label_real: torch.Tensor,
                                 cost_matrix: torch.Tensor) -> torch.Tensor:
@@ -149,16 +187,8 @@ class MnistConfigurationBase(ModelTrainingConfiguration, ABC):
     p = 2
     q = 2
 
-    def __init__(self, dataset_dir: str, output_directory: str):
-        if torch.cuda.is_available():
-            print("Using CUDA")
-            device = torch.device('cuda')
-        else:
-            print("CUDA is not available, falling back to CPU")
-            device = torch.device('cpu')
-
+    def __init__(self, config: configuration.Configuration):
         self.latent_dimension = 100
-        self.output_directory = output_directory
 
         # self.subtract_ot_bias = True
 
@@ -168,26 +198,17 @@ class MnistConfigurationBase(ModelTrainingConfiguration, ABC):
 
         # load data
         self.dataloader = torch.utils.data.DataLoader(
-            datasets.MNIST(os.path.join(dataset_dir, 'mnist'),
+            datasets.MNIST(os.path.join(config.dataset.directory, 'mnist'),
                            train=True, download=True,
                            transform=transforms.Compose([
                                transforms.ToTensor(),
                                transforms.Normalize((0.5,), (0.5,))])),
             batch_size=batch_size, shuffle=True, pin_memory=True)
 
-        img_dim = 28 * 28
+        self.data_dimension = 28 * 28
 
-        # Initialize models and optimizers
-        self.generator_network = MnistGenerator(
-            self.latent_dimension, img_dim).to(device)
-        self.discriminator_network = MnistDiscriminator(img_dim).to(device)
-
-        self.generator_optimizer = torch.optim.Adam(
-            self.generator_network.parameters(), lr=lr_generator)
-        self.discriminator_optimizer = torch.optim.RMSprop(
-            self.discriminator_network.parameters(), lr=lr_discriminator)
-
-    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+    def save_generated_data(self, generator_network: torch.nn.Module,
+                            data_fake: torch.Tensor, images_path: str,
                             steps: int, epochs: int) -> None:
         save_image(data_fake[:25].reshape(-1, 1, 28, 28),
                    os.path.join(images_path,
@@ -197,21 +218,16 @@ class MnistConfigurationBase(ModelTrainingConfiguration, ABC):
 
 class MnistBalancedConfiguration(MnistConfigurationBase,
                                  BalancedEntropyConfigurationBase):
-    def __init__(self, dataset_dir: str, output_directory: str,
-                 epsilon: float):
-        MnistConfigurationBase.__init__(self, dataset_dir, output_directory)
-
-        self.epsilon = epsilon
+    def __init__(self, config: configuration.Configuration):
+        MnistConfigurationBase.__init__(self, config)
+        BalancedEntropyConfigurationBase.__init__(self, config)
 
 
 class MnistUnbalancedConfiguration(MnistConfigurationBase,
                                    UnbalancedEntropyConfigurationBase):
-    def __init__(self, dataset_dir: str, output_directory: str,
-                 epsilon: float, tau: float):
-        MnistConfigurationBase.__init__(self, dataset_dir, output_directory)
-
-        self.epsilon = epsilon
-        self.tau = tau
+    def __init__(self, config: configuration.Configuration):
+        MnistConfigurationBase.__init__(self, config)
+        UnbalancedEntropyConfigurationBase.__init__(self, config)
 
 
 class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
@@ -220,12 +236,9 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
 
     _source_samples_plot: torch.Tensor
 
-    def __init__(self, dataset_directory: str, output_directory: str):
-        dtype = torch.cuda.FloatTensor
-        device = torch.cuda.current_device()
-
+    def __init__(self, config: configuration.Configuration):
         DSOURCE = 128
-        NBATCH = 64
+        NBATCH = 1
 
         self.latent_dimension = DSOURCE
 
@@ -240,43 +253,37 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
             [transforms.ToTensor(),
              transforms.Lambda(crop),
              transforms.ToPILImage(),
-             transforms.Scale(size=(re_size, re_size),
-                              interpolation=Image.BICUBIC),
+             transforms.Resize(size=(re_size, re_size),
+                               interpolation=Image.BICUBIC),
              transforms.ToTensor(),
              transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)])
+
+        self.data_dimension = re_size ** 2
 
         # wget https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets
         # /celeba.zip
         # Make sure to change to correct path!
-        imagenet_data = datasets.ImageFolder(dataset_directory,
+        imagenet_data = datasets.ImageFolder(config.dataset.directory,
                                              transform=transform)
         self.dataloader = torch.utils.data.DataLoader(imagenet_data,
                                                       batch_size=NBATCH,
                                                       shuffle=True,
                                                       num_workers=0)
 
-        self.generator_network = GoodGenerator().to(device)
-        self.discriminator_network = GoodDiscriminator().to(device)
-
-        self.generator_optimizer = torch.optim.Adam(
-            self.generator_network.parameters(), lr=1e-5, betas=(0.5, .999))
-        self.discriminator_optimizer = torch.optim.Adam(
-            self.discriminator_network.parameters(), lr=1e-4,
-            betas=(0.5, .999))
-
-        self.output_directory = output_directory
-
         # Fix latent samples for visualization purposes
-        self._source_samples_plot = torch.randn((5 * 5, DSOURCE)).type(dtype)
+        self._source_samples_plot = torch.randn(
+            (5 * 5, DSOURCE), device=config.runtime_options['device'])
 
-    def save_generated_data(self, data_fake: torch.Tensor, images_path: str,
+    def save_generated_data(self, generator_network: torch.nn.Module,
+                            data_fake: torch.Tensor, images_path: str,
                             steps: int, epochs: int) -> None:
         NC = 3
         IMGSIZE = 64
 
         fig = plt.figure(figsize=(5, 5))
-        samples_plot = self.generator_network(
+        samples_plot = generator_network(
             self._source_samples_plot).cpu().detach()
+
         for k in range(5 * 5):
             plt.subplot(5, 5, k + 1)
             plt.xticks([])
@@ -295,24 +302,20 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
 
 class CelebaBalancedConfiguration(CelebaConfigurationBase,
                                   BalancedEntropyConfigurationBase):
-    def __init__(self, dataset_dir: str, output_directory: str,
-                 epsilon: float):
-        CelebaConfigurationBase.__init__(self, dataset_dir, output_directory)
-
-        self.epsilon = epsilon
+    def __init__(self, config: configuration.Configuration):
+        CelebaConfigurationBase.__init__(self, config)
+        BalancedEntropyConfigurationBase.__init__(self, config)
 
 
 class CelebaUnbalancedConfiguration(CelebaConfigurationBase,
                                     UnbalancedEntropyConfigurationBase):
-    def __init__(self, dataset_dir: str, output_directory: str,
-                 epsilon: float, tau: float):
-        CelebaConfigurationBase.__init__(self, dataset_dir, output_directory)
-
-        self.epsilon = epsilon
-        self.tau = tau
+    def __init__(self, config: configuration.Configuration):
+        CelebaConfigurationBase.__init__(self, config)
+        UnbalancedEntropyConfigurationBase.__init__(self, config)
 
 
-def load_checkpoints(configuration: ModelTrainingConfiguration,
+def load_checkpoints(generator_network: torch.nn.Module,
+                     discriminator_network: torch.nn.Module,
                      models_path: str) -> Tuple[int, int]:
     print("Loading checkpoints")
 
@@ -357,15 +360,15 @@ def load_checkpoints(configuration: ModelTrainingConfiguration,
 
     generator_checkpoint_path = os.path.join(
         models_path, generator_checkpoints[load_step][0])
-    configuration.generator_network.load_state_dict(
+    generator_network.load_state_dict(
         torch.load(generator_checkpoint_path))
-    configuration.generator_network.train()
+    generator_network.train()
 
     discriminator_checkpoint_path = os.path.join(
         models_path, discriminator_checkpoints[load_step][0])
-    configuration.discriminator_network.load_state_dict(
+    discriminator_network.load_state_dict(
         torch.load(discriminator_checkpoint_path))
-    configuration.discriminator_network.train()
+    discriminator_network.train()
 
     print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
 
@@ -373,24 +376,40 @@ def load_checkpoints(configuration: ModelTrainingConfiguration,
 
 
 def train_regularized_ot_GAN(
-        configuration: ModelTrainingConfiguration,
+        config: configuration.Configuration,
+        train_config: ModelTrainingConfiguration,
         max_epochs: int,
         max_steps: Optional[int] = None,
         save_interval: int = 200,
         num_train_discriminator: int = 1) -> None:
-    p = configuration.p
-    q = configuration.q
 
-    device = next(configuration.generator_network.parameters()).device
+    p = train_config.p
+    q = train_config.q
 
-    images_path = os.path.join(configuration.output_directory, 'images')
-    models_path = os.path.join(configuration.output_directory, 'models')
+    device = config.runtime_options['device']
 
-    os.makedirs(configuration.output_directory, exist_ok=True)
+    generator_network, discriminator_network = models.load_models(
+        config,
+        dict(latent_dim=train_config.latent_dimension,
+             output_dim=train_config.data_dimension),
+        dict(input_dim=train_config.data_dimension))
+
+    generator_network.to(device)
+    discriminator_network.to(device)
+
+    generator_optimizer, discriminator_optimizer = load_optimizers(
+        config, generator_network.parameters(),
+        discriminator_network.parameters())
+
+    images_path = os.path.join(config.train.output_directory, 'images')
+    models_path = os.path.join(config.train.output_directory, 'models')
+
+    os.makedirs(config.train.output_directory, exist_ok=True)
     os.makedirs(images_path, exist_ok=True)
     os.makedirs(models_path, exist_ok=True)
 
-    steps, epochs = load_checkpoints(configuration, models_path)
+    steps, epochs = load_checkpoints(generator_network, discriminator_network,
+                                     models_path)
 
     cost_matrix_cross: torch.Tensor
     cost_matrix_real: torch.Tensor
@@ -401,7 +420,7 @@ def train_regularized_ot_GAN(
 
         while True:
             print(f"Epoch {epochs}")
-            for data in configuration.dataloader:
+            for data in train_config.dataloader:
                 yield data
 
             epochs += 1
@@ -417,27 +436,27 @@ def train_regularized_ot_GAN(
 
         cost_matrix_cross = lq_dist(data_fake, data_real)
 
-        if configuration.subtract_ot_bias:
+        if train_config.subtract_ot_bias:
             cost_matrix_real = lq_dist(data_real, data_real)
             cost_matrix_fake = lq_dist(data_fake, data_fake)
 
     def get_loss() -> torch.Tensor:
-        label_fake = configuration.discriminator_network(data_fake)
-        label_real = configuration.discriminator_network(data_real)
+        label_fake = discriminator_network(data_fake)
+        label_real = discriminator_network(data_real)
 
-        label_real_transformed_fake = configuration.dual_variable_transform(
+        label_real_transformed_fake = train_config.dual_variable_transform(
             label_fake, cost_matrix_cross)
 
-        loss_val = configuration.objective_function(
+        loss_val = train_config.objective_function(
             label_real_transformed_fake, label_fake, cost_matrix_cross)
-        if configuration.subtract_ot_bias:
-            label_real_transformed = configuration.dual_variable_transform(
+        if train_config.subtract_ot_bias:
+            label_real_transformed = train_config.dual_variable_transform(
                 label_real, cost_matrix_real)
-            label_fake_transformed = configuration.dual_variable_transform(
+            label_fake_transformed = train_config.dual_variable_transform(
                 label_fake, cost_matrix_fake)
-            bias_real = configuration.objective_function(
+            bias_real = train_config.objective_function(
                 label_real, label_real_transformed, cost_matrix_real)
-            bias_fake = configuration.objective_function(
+            bias_fake = train_config.objective_function(
                 label_fake, label_fake_transformed, cost_matrix_fake)
 
             # print(bias_real.item())
@@ -456,9 +475,9 @@ def train_regularized_ot_GAN(
         data_real = data_real.reshape(batch_size, -1)
 
         with torch.no_grad():
-            z = torch.randn((batch_size, configuration.latent_dimension),
+            z = torch.randn((batch_size, train_config.latent_dimension),
                             device=device)
-            data_fake = configuration.generator_network(z).reshape(
+            data_fake = generator_network(z).reshape(
                 batch_size, -1)
 
             compute_cost_matrices(data_real, data_fake)
@@ -468,11 +487,11 @@ def train_regularized_ot_GAN(
 
             print(f'Discriminator loss: {loss.item()}')
 
-            configuration.discriminator_optimizer.zero_grad()
+            discriminator_optimizer.zero_grad()
             loss.backward()
-            configuration.discriminator_optimizer.step()
+            discriminator_optimizer.step()
 
-        data_fake = configuration.generator_network(z).reshape(batch_size, -1)
+        data_fake = generator_network(z).reshape(batch_size, -1)
 
         compute_cost_matrices(data_real, data_fake)
 
@@ -480,20 +499,20 @@ def train_regularized_ot_GAN(
 
         print(f'Generator loss: {loss.item()}')
 
-        configuration.generator_optimizer.zero_grad()
+        generator_optimizer.zero_grad()
         loss.backward()
-        configuration.generator_optimizer.step()
+        generator_optimizer.step()
 
         if steps % save_interval == 0 and steps > 0:
             print("Saving images and models")
-            configuration.save_generated_data(data_fake, images_path,
-                                              steps, epochs)
+            train_config.save_generated_data(generator_network, data_fake,
+                                             images_path, steps, epochs)
 
-            torch.save(configuration.generator_network.state_dict(),
+            torch.save(generator_network.state_dict(),
                        os.path.join(
                            models_path,
                            f'generator_step_{steps}_epoch_{epochs}.pt'))
-            torch.save(configuration.discriminator_network.state_dict(),
+            torch.save(discriminator_network.state_dict(),
                        os.path.join(
                            models_path,
                            f'discriminator_step_{steps}_epoch_{epochs}.pt'))
@@ -505,75 +524,58 @@ def train_regularized_ot_GAN(
             break
 
 
-def train_mnist(args):
-    eps = args.epsilon
-    tau = args.tau
-
-    if args.ot_type == 'unbalanced':
-        configuration = MnistUnbalancedConfiguration(
-            args.dataset_dir, args.output_dir, eps, tau)
+def train_mnist(config: configuration.Configuration):
+    if config.loss.type == 'unbalanced':
+        train_configuration = MnistUnbalancedConfiguration(config)
+    elif config.loss.type == 'balanced':
+        train_configuration = MnistBalancedConfiguration(config)
     else:
-        configuration = MnistBalancedConfiguration(
-            args.dataset_dir, args.output_dir, eps)
+        raise Exception(f'Unknown loss type: {config.loss.type}')
 
-    train_regularized_ot_GAN(configuration,
-                             max_epochs=args.max_epochs,
-                             max_steps=args.max_steps,
-                             num_train_discriminator=args.critic_steps,
-                             save_interval=args.save_interval)
+    train_regularized_ot_GAN(config, train_configuration,
+                             max_epochs=config.train.maximum_epochs,
+                             max_steps=config.train.maximum_steps,
+                             num_train_discriminator=config.train.critic_steps,
+                             save_interval=config.train.save_interval)
 
 
-def train_celeba(args):
-    eps = args.epsilon
-    tau = args.tau
-
-    if args.ot_type == 'unbalanced':
-        configuration = CelebaUnbalancedConfiguration(
-            args.dataset_dir, args.output_dir, eps, tau)
+def train_celeba(config: configuration.Configuration):
+    if config.loss.type == 'unbalanced':
+        train_configuration = CelebaUnbalancedConfiguration(config)
+    elif config.loss.type == 'balanced':
+        train_configuration = CelebaBalancedConfiguration(config)
     else:
-        configuration = CelebaBalancedConfiguration(
-            args.dataset_dir, args.output_dir, eps)
+        raise Exception(f'Unknown loss type: {config.loss.type}')
 
-    train_regularized_ot_GAN(configuration,
-                             max_epochs=args.max_epochs,
-                             max_steps=args.max_steps,
-                             num_train_discriminator=args.critic_steps,
-                             save_interval=args.save_interval)
+    train_regularized_ot_GAN(config, train_configuration,
+                             max_epochs=config.train.maximum_epochs,
+                             max_steps=config.train.maximum_steps,
+                             num_train_discriminator=config.train.critic_steps,
+                             save_interval=config.train.save_interval)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset-dir', type=str, required=True,
-                        help="Directory which contains the dataset.")
-    parser.add_argument('--output-dir', type=str, required=True,
-                        help="Directory to save images and models to.")
-    parser.add_argument('--save-interval', type=int, default=200, metavar='S',
-                        help="Save images and models every S steps.")
-
-    parser.add_argument('--dataset', required=True, choices=[
-        'mnist', 'celeba'], help='Selects which dataset type to use.')
-    parser.add_argument('--ot-type', required=True, choices=[
-        'balanced', 'unbalanced'], help='Selects which OT type to use.')
-    parser.add_argument('--max-epochs', type=int, default=10000,
-                        help='Maximum number of epochs to train.')
-    parser.add_argument('--max-steps', type=int, default=30000,
-                        help='Maximum number of steps to train.')
-    parser.add_argument('--critic-steps', type=int, default=1,
-                        help='Number of that the critic is trained '
-                             'each iteration.')
-
-    # Hyperparameters
-    parser.add_argument('--epsilon', default=1, type=float)
-    parser.add_argument('--tau', default=100, type=float)
+    parser.add_argument('--config-file', '-f', type=argparse.FileType('r'),
+                        required=True)
 
     args = parser.parse_args()
 
-    print(f"eps={args.epsilon} tau={args.tau}")
+    config = configuration.load_configuration(args.config_file)
 
-    if args.dataset == 'mnist':
-        train_mnist(args)
+    if torch.cuda.is_available():
+        print("Using CUDA")
+        config.runtime_options['device'] = torch.device('cuda')
     else:
-        train_celeba(args)
+        print("CUDA is not available, falling back to CPU")
+        config.runtime_options['device'] = torch.device('cpu')
+
+    if config.dataset.type == 'mnist':
+        train_mnist(config)
+    elif config.dataset.type == 'celeba':
+        train_celeba(config)
+    else:
+        raise Exception(f'Unknown dataset type: {config.dataset.type}')
 
 
 if __name__ == "__main__":
