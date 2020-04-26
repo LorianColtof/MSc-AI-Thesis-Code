@@ -1,4 +1,4 @@
-from typing import IO, Dict, Any, NamedTuple, TypedDict
+from typing import IO, Dict, Any, NamedTuple, TypedDict, Optional
 
 import jsonschema
 import torch
@@ -87,10 +87,15 @@ class GeneratorDiscriminator(NamedTuple):
 
 class Train(NamedTuple):
     output_directory: str
+    batch_size: int
+    latent_dimension: int
     save_interval: int
     maximum_epochs: int
     maximum_steps: int
     critic_steps: int = default_critic_steps
+    batch_size_fake: Optional[int] = None
+    use_dual_critic_networks: bool = False
+    use_checkpoints: bool = True
 
 
 class RuntimeOptions(TypedDict):

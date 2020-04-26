@@ -366,26 +366,38 @@ class MnistDiscriminator(nn.Module):
         return self.model(img)
 
 
+class MnistDiscriminatorExtraDeep(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 128),
+            nn.LeakyReLU(0.2),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, img):
+        # return discriminator score for img
+        return self.model(img)
+
+
 _models = {
     'MnistGenerator': MnistGenerator,
     'MnistDiscriminator': MnistDiscriminator,
+    'MnistDiscriminatorExtraDeep': MnistDiscriminatorExtraDeep,
     'GoodGenerator': GoodGenerator,
     'GoodDiscriminator': GoodDiscriminator
 }
 
 
-def load_models(config: Configuration,
-                generator_kwargs: Dict[str, Any],
-                discriminator_kwargs: Dict[str, Any]) \
-        -> Tuple[nn.Module, nn.Module]:
+def load_model(model_type: str, **kwargs: Any) -> nn.Module:
     try:
-        generator = _models[config.models.generator.type]
-        discriminator = _models[config.models.discriminator.type]
-    except KeyError as e:
-        raise Exception(f"Model '{e.args[0]}' does not exist")
+        model = _models[model_type]
+    except KeyError:
+        raise Exception(f"Model '{model_type}' does not exist")
 
-    generator_kwargs.update(config.models.generator.options)
-    discriminator_kwargs.update(config.models.discriminator.options)
-
-    return (generator(**generator_kwargs),
-            discriminator(**discriminator_kwargs))
+    return model(**kwargs)

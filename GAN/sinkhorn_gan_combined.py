@@ -1,22 +1,20 @@
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Optional, Iterator, Tuple, Type
+from typing import Iterator, Tuple, Type, Any
 import argparse
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from torch.nn import Parameter
-from torch.optim import Optimizer
+from torch.optim.optimizer import Optimizer
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 import PIL.Image as Image
 from ot.smooth import smooth_ot_dual
 
 import models
-from models import GoodGenerator, GoodDiscriminator, \
-    MnistGenerator, MnistDiscriminator
 import configuration
 
 
@@ -87,31 +85,44 @@ def softmin(X: torch.tensor, epsilon: float = 1) -> torch.Tensor:
                    None])
 
 
-def load_optimizers(config: configuration.Configuration,
-                    generator_params: Iterator[Parameter],
-                    discriminator_params: Iterator[Parameter]) \
-        -> Tuple[Optimizer, Optimizer]:
+def gradient_penalty(discriminator, samples_real, samples_generated,
+                     lambda_reg=5):
+    device = samples_real.device
 
+    batch_size = samples_real.shape[0]
+    alpha = torch.rand(batch_size, 1, device=device) \
+        .expand(samples_real.size())
+
+    interpolates = alpha * samples_real + \
+                   ((1 - alpha) * samples_generated[:batch_size])
+
+    interpolates_var = torch.autograd.Variable(
+        interpolates, requires_grad=True)
+
+    disc_interpolates = discriminator(interpolates_var)
+
+    gradients = torch.autograd.grad(
+        outputs=disc_interpolates, inputs=interpolates_var,
+        grad_outputs=torch.ones(disc_interpolates.size(), device=device),
+        create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+    penalty = (((gradients.norm(2, dim=1) - 1) ** 2).mean()
+                        * lambda_reg)
+    return penalty
+
+
+def load_optimizer(optim_type: str,
+                   model_params: Iterator[Parameter],
+                   **kwargs: Any) -> Optimizer:
     try:
-        generator_optimizer: Type[Optimizer] = getattr(
-            torch.optim, config.optimizers.generator.type)
+        optimizer: Type[Optimizer] = getattr(
+            torch.optim, optim_type)
     except AttributeError:
         raise Exception(
-            f"Optimizer type '{config.optimizers.generator.type}' "
+            f"Optimizer type '{optim_type}' "
             "does not exist.")
 
-    try:
-        discriminator_optimizer: Type[Optimizer] = getattr(
-            torch.optim, config.optimizers.discriminator.type)
-    except AttributeError:
-        raise Exception(
-            f"Optimizer type '{config.optimizers.discriminator.type}' "
-            "does not exist.")
-
-    return (generator_optimizer(params=generator_params,
-                                **config.optimizers.generator.options),
-            discriminator_optimizer(params=discriminator_params,
-                                    **config.optimizers.discriminator.options))
+    return optimizer(params=model_params, **kwargs)
 
 
 class ModelTrainingConfiguration(ABC):
@@ -188,24 +199,23 @@ class MnistConfigurationBase(ModelTrainingConfiguration, ABC):
     q = 2
 
     def __init__(self, config: configuration.Configuration):
-        self.latent_dimension = 100
+        def create_dataloader(batch_size: int) -> torch.utils.data.DataLoader:
+            return torch.utils.data.DataLoader(
+                datasets.MNIST(os.path.join(config.dataset.directory, 'mnist'),
+                               train=True, download=True,
+                               transform=transforms.Compose([
+                                   transforms.ToTensor(),
+                                   transforms.Normalize((0.5,), (0.5,))])),
+                batch_size=batch_size, shuffle=True,
+                pin_memory=True)
+
+        self.latent_dimension = config.train.latent_dimension
 
         # self.subtract_ot_bias = True
 
-        batch_size = 128
-        lr_generator = 0.0002
-        lr_discriminator = 1e-4
-
         # load data
-        self.dataloader = torch.utils.data.DataLoader(
-            datasets.MNIST(os.path.join(config.dataset.directory, 'mnist'),
-                           train=True, download=True,
-                           transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               transforms.Normalize((0.5,), (0.5,))])),
-            batch_size=batch_size, shuffle=True, pin_memory=True)
-
         self.data_dimension = 28 * 28
+        self.dataloader = create_dataloader(config.train.batch_size)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
                             data_fake: torch.Tensor, images_path: str,
@@ -237,10 +247,7 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
     _source_samples_plot: torch.Tensor
 
     def __init__(self, config: configuration.Configuration):
-        DSOURCE = 128
-        NBATCH = 1
-
-        self.latent_dimension = DSOURCE
+        self.latent_dimension = config.train.latent_dimension
 
         crop_size = 108
         re_size = 64
@@ -265,14 +272,14 @@ class CelebaConfigurationBase(ModelTrainingConfiguration, ABC):
         # Make sure to change to correct path!
         imagenet_data = datasets.ImageFolder(config.dataset.directory,
                                              transform=transform)
-        self.dataloader = torch.utils.data.DataLoader(imagenet_data,
-                                                      batch_size=NBATCH,
-                                                      shuffle=True,
-                                                      num_workers=0)
+        self.dataloader = torch.utils.data.DataLoader(
+            imagenet_data, batch_size=config.train.batch_size,
+            shuffle=True, num_workers=4)
 
         # Fix latent samples for visualization purposes
         self._source_samples_plot = torch.randn(
-            (5 * 5, DSOURCE), device=config.runtime_options['device'])
+            (5 * 5, self.latent_dimension),
+            device=config.runtime_options['device'])
 
     def save_generated_data(self, generator_network: torch.nn.Module,
                             data_fake: torch.Tensor, images_path: str,
@@ -377,29 +384,23 @@ def load_checkpoints(generator_network: torch.nn.Module,
 
 def train_regularized_ot_GAN(
         config: configuration.Configuration,
-        train_config: ModelTrainingConfiguration,
-        max_epochs: int,
-        max_steps: Optional[int] = None,
-        save_interval: int = 200,
-        num_train_discriminator: int = 1) -> None:
+        train_config: ModelTrainingConfiguration) -> None:
 
     p = train_config.p
     q = train_config.q
 
     device = config.runtime_options['device']
 
-    generator_network, discriminator_network = models.load_models(
-        config,
-        dict(latent_dim=train_config.latent_dimension,
-             output_dim=train_config.data_dimension),
-        dict(input_dim=train_config.data_dimension))
-
+    generator_network = models.load_model(
+        config.models.generator.type,
+        latent_dim=train_config.latent_dimension,
+        output_dim=train_config.data_dimension,
+        **config.models.generator.options)
     generator_network.to(device)
-    discriminator_network.to(device)
 
-    generator_optimizer, discriminator_optimizer = load_optimizers(
-        config, generator_network.parameters(),
-        discriminator_network.parameters())
+    generator_optimizer = load_optimizer(config.optimizers.generator.type,
+                                         generator_network.parameters(),
+                                         **config.optimizers.generator.options)
 
     images_path = os.path.join(config.train.output_directory, 'images')
     models_path = os.path.join(config.train.output_directory, 'models')
@@ -408,8 +409,50 @@ def train_regularized_ot_GAN(
     os.makedirs(images_path, exist_ok=True)
     os.makedirs(models_path, exist_ok=True)
 
-    steps, epochs = load_checkpoints(generator_network, discriminator_network,
-                                     models_path)
+    if config.train.use_dual_critic_networks:
+        discriminator_network_real = models.load_model(
+            config.models.discriminator.type,
+            input_dim=train_config.data_dimension,
+            **config.models.discriminator.options)
+        discriminator_network_fake = models.load_model(
+            config.models.discriminator.type,
+            input_dim=train_config.data_dimension,
+            **config.models.discriminator.options)
+
+        discriminator_network_real.to(device)
+        discriminator_network_fake.to(device)
+
+        discriminator_optimizer_real = load_optimizer(
+            config.optimizers.discriminator.type,
+            discriminator_network_real.parameters(),
+            **config.optimizers.discriminator.options)
+        discriminator_optimizer_fake = load_optimizer(
+            config.optimizers.discriminator.type,
+            discriminator_network_fake.parameters(),
+            **config.optimizers.discriminator.options)
+
+        # TODO: make checkpoint loading work
+        steps = 0
+        epochs = 0
+    else:
+        discriminator_network = models.load_model(
+            config.models.discriminator.type,
+            input_dim=train_config.data_dimension,
+            **config.models.discriminator.options)
+
+        discriminator_network.to(device)
+        discriminator_optimizer = load_optimizer(
+            config.optimizers.discriminator.type,
+            discriminator_network.parameters(),
+            **config.optimizers.discriminator.options)
+
+        if config.train.use_checkpoints:
+            steps, epochs = load_checkpoints(generator_network,
+                                             discriminator_network,
+                                             models_path)
+        else:
+            steps = 0
+            epochs = 0
 
     cost_matrix_cross: torch.Tensor
     cost_matrix_real: torch.Tensor
@@ -436,62 +479,89 @@ def train_regularized_ot_GAN(
 
         cost_matrix_cross = lq_dist(data_fake, data_real)
 
-        if train_config.subtract_ot_bias:
-            cost_matrix_real = lq_dist(data_real, data_real)
-            cost_matrix_fake = lq_dist(data_fake, data_fake)
+        # Stuff for Sinkhorn divergence
+        # if train_config.subtract_ot_bias:
+        #     cost_matrix_real = lq_dist(data_real, data_real)
+        #     cost_matrix_fake = lq_dist(data_fake, data_fake)
 
     def get_loss() -> torch.Tensor:
-        label_fake = discriminator_network(data_fake)
-        label_real = discriminator_network(data_real)
+        if config.train.use_dual_critic_networks:
+            label_real = discriminator_network_real(data_real)
+            label_fake = discriminator_network_fake(data_fake)
 
-        label_real_transformed_fake = train_config.dual_variable_transform(
-            label_fake, cost_matrix_cross)
+            loss_val = (train_config.objective_function(
+                label_real, label_fake, cost_matrix_cross)
+                        - gradient_penalty(
+                        discriminator_network_real, data_real, data_fake)
+                        - gradient_penalty(
+                        discriminator_network_fake, data_real, data_fake))
+        else:
+            label_fake = discriminator_network(data_fake)
+            label_real_transformed_fake = train_config.dual_variable_transform(
+                label_fake, cost_matrix_cross)
 
-        loss_val = train_config.objective_function(
-            label_real_transformed_fake, label_fake, cost_matrix_cross)
-        if train_config.subtract_ot_bias:
-            label_real_transformed = train_config.dual_variable_transform(
-                label_real, cost_matrix_real)
-            label_fake_transformed = train_config.dual_variable_transform(
-                label_fake, cost_matrix_fake)
-            bias_real = train_config.objective_function(
-                label_real, label_real_transformed, cost_matrix_real)
-            bias_fake = train_config.objective_function(
-                label_fake, label_fake_transformed, cost_matrix_fake)
+            loss_val = train_config.objective_function(
+                label_real_transformed_fake, label_fake, cost_matrix_cross)
 
-            # print(bias_real.item())
-            # print(bias_fake.item())
-
-            loss_val -= 0.5 * (bias_real + bias_fake)
+        # Stuff for Sinkhorn divergence
+        # loss_val = train_config.objective_function(
+        #     label_real_transformed_fake, label_fake_obj, cost_matrix_cross)
+        # if train_config.subtract_ot_bias:
+        #     label_real_transformed = train_config.dual_variable_transform(
+        #         label_real, cost_matrix_real)
+        #     label_fake_transformed = train_config.dual_variable_transform(
+        #         label_fake, cost_matrix_fake)
+        #     bias_real = train_config.objective_function(
+        #         label_real, label_real_transformed, cost_matrix_real)
+        #     bias_fake = train_config.objective_function(
+        #         label_fake, label_fake_transformed, cost_matrix_fake)
+        #
+        #     # print(bias_real.item())
+        #     # print(bias_fake.item())
+        #
+        #     loss_val -= 0.5 * (bias_real + bias_fake)
 
         return loss_val
 
     data_it = data_iterator()
-    while epochs < max_epochs:
+
+    batch_size_fake = config.train.batch_size_fake \
+        if config.train.batch_size_fake else config.train.batch_size
+
+    while epochs < config.train.maximum_epochs:
         print(f"Step {steps}")
 
         data_real: torch.Tensor = next(data_it)[0].to(device)
-        batch_size = data_real.size(0)
+        batch_size = data_real.shape[0]
         data_real = data_real.reshape(batch_size, -1)
 
         with torch.no_grad():
-            z = torch.randn((batch_size, train_config.latent_dimension),
+            z = torch.randn((batch_size_fake,
+                             train_config.latent_dimension),
                             device=device)
-            data_fake = generator_network(z).reshape(
-                batch_size, -1)
+            data_fake = generator_network(z).reshape(batch_size_fake, -1)
 
             compute_cost_matrices(data_real, data_fake)
 
-        for _ in range(num_train_discriminator):
+        for _ in range(config.train.critic_steps):
             loss = -get_loss()
 
             print(f'Discriminator loss: {loss.item()}')
 
-            discriminator_optimizer.zero_grad()
-            loss.backward()
-            discriminator_optimizer.step()
+            if config.train.use_dual_critic_networks:
+                discriminator_optimizer_real.zero_grad()
+                discriminator_optimizer_fake.zero_grad()
 
-        data_fake = generator_network(z).reshape(batch_size, -1)
+                loss.backward()
+
+                discriminator_optimizer_real.step()
+                discriminator_optimizer_fake.step()
+            else:
+                discriminator_optimizer.zero_grad()
+                loss.backward()
+                discriminator_optimizer.step()
+
+        data_fake = generator_network(z).reshape(batch_size_fake, -1)
 
         compute_cost_matrices(data_real, data_fake)
 
@@ -503,23 +573,33 @@ def train_regularized_ot_GAN(
         loss.backward()
         generator_optimizer.step()
 
-        if steps % save_interval == 0 and steps > 0:
+        if steps % config.train.save_interval == 0 and steps > 0:
             print("Saving images and models")
             train_config.save_generated_data(generator_network, data_fake,
                                              images_path, steps, epochs)
 
-            torch.save(generator_network.state_dict(),
+            if config.train.use_dual_critic_networks:
+                torch.save({
+                    'generator': generator_network.state_dict(),
+                    'discriminator_real':
+                        discriminator_network_real.state_dict(),
+                    'discriminator_fake':
+                        discriminator_network_fake.state_dict()
+                }, os.path.join(models_path,
+                                f'step_{steps}_epoch_{epochs}.pt'))
+            else:
+                torch.save(generator_network.state_dict(),
                        os.path.join(
                            models_path,
                            f'generator_step_{steps}_epoch_{epochs}.pt'))
-            torch.save(discriminator_network.state_dict(),
-                       os.path.join(
-                           models_path,
-                           f'discriminator_step_{steps}_epoch_{epochs}.pt'))
+                torch.save(discriminator_network.state_dict(),
+                           os.path.join(
+                               models_path,
+                               f'discriminator_step_{steps}_epoch_{epochs}.pt'))
 
         steps += 1
 
-        if max_steps and steps > max_steps:
+        if steps > config.train.maximum_steps:
             print("Reached maximum amount of steps. Quitting.")
             break
 
@@ -532,11 +612,7 @@ def train_mnist(config: configuration.Configuration):
     else:
         raise Exception(f'Unknown loss type: {config.loss.type}')
 
-    train_regularized_ot_GAN(config, train_configuration,
-                             max_epochs=config.train.maximum_epochs,
-                             max_steps=config.train.maximum_steps,
-                             num_train_discriminator=config.train.critic_steps,
-                             save_interval=config.train.save_interval)
+    train_regularized_ot_GAN(config, train_configuration)
 
 
 def train_celeba(config: configuration.Configuration):
@@ -547,11 +623,7 @@ def train_celeba(config: configuration.Configuration):
     else:
         raise Exception(f'Unknown loss type: {config.loss.type}')
 
-    train_regularized_ot_GAN(config, train_configuration,
-                             max_epochs=config.train.maximum_epochs,
-                             max_steps=config.train.maximum_steps,
-                             num_train_discriminator=config.train.critic_steps,
-                             save_interval=config.train.save_interval)
+    train_regularized_ot_GAN(config, train_configuration)
 
 
 def main():
