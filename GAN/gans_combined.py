@@ -91,7 +91,8 @@ def gradient_penalty(discriminator, samples_real, samples_generated,
 
     batch_size = samples_real.shape[0]
     alpha = torch.rand(batch_size, 1, device=device) \
-        .expand(samples_real.size())
+        .expand(samples_real.reshape(batch_size, -1).shape) \
+        .reshape(samples_real.shape)
 
     interpolates = alpha * samples_real + \
                    ((1 - alpha) * samples_generated[:batch_size])
@@ -382,6 +383,48 @@ def load_checkpoints(generator_network: torch.nn.Module,
     return load_step + 1, load_epoch
 
 
+def load_checkpoints_single_file(generator_network: torch.nn.Module,
+                                 discriminator_network: torch.nn.Module,
+                                 models_path: str) -> Tuple[int, int]:
+    print("Loading checkpoints")
+
+    file_regex = re.compile(r'step_(\d+)_epoch_(\d+).pt')
+
+    files = os.listdir(models_path)
+    checkpoints = {}
+
+    for file in files:
+        match = file_regex.match(file)
+        if not match:
+            continue
+
+        step = int(match.group(1))
+        epoch = int(match.group(2))
+
+        checkpoints[step] = (file, epoch)
+
+    if not checkpoints:
+        print("No checkpoints available to load.")
+        return 0, 0
+
+    load_step = max(checkpoints.keys())
+
+    load_epoch = checkpoints[load_step][1]
+
+    checkpoint_path = os.path.join(models_path, checkpoints[load_step][0])
+    checkpoint_dict = torch.load(checkpoint_path)
+
+    generator_network.load_state_dict(checkpoint_dict['generator'])
+    generator_network.train()
+
+    discriminator_network.load_state_dict(checkpoint_dict['discriminator'])
+    discriminator_network.train()
+
+    print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
+
+    return load_step + 1, load_epoch
+
+
 def train_regularized_ot_GAN(
         config: configuration.Configuration,
         train_config: ModelTrainingConfiguration) -> None:
@@ -533,15 +576,19 @@ def train_regularized_ot_GAN(
 
         data_real: torch.Tensor = next(data_it)[0].to(device)
         batch_size = data_real.shape[0]
-        data_real = data_real.reshape(batch_size, -1)
+        data_real_flat = data_real.reshape(batch_size, -1)
+
+        img_shape = data_real.shape[1:]
 
         with torch.no_grad():
             z = torch.randn((batch_size_fake,
                              train_config.latent_dimension),
                             device=device)
-            data_fake = generator_network(z).reshape(batch_size_fake, -1)
+            data_fake = generator_network(z).reshape(-1, *img_shape)
 
-            compute_cost_matrices(data_real, data_fake)
+            data_fake_flat = data_fake.reshape(batch_size_fake, -1)
+
+            compute_cost_matrices(data_real_flat, data_fake_flat)
 
         for _ in range(config.train.critic_steps):
             loss = -get_loss()
@@ -561,9 +608,11 @@ def train_regularized_ot_GAN(
                 loss.backward()
                 discriminator_optimizer.step()
 
-        data_fake = generator_network(z).reshape(batch_size_fake, -1)
+        data_fake = generator_network(z).reshape(-1, *img_shape)
 
-        compute_cost_matrices(data_real, data_fake)
+        data_fake_flat = data_fake.reshape(batch_size_fake, -1)
+
+        compute_cost_matrices(data_real_flat, data_fake_flat)
 
         loss = get_loss()
 
@@ -596,6 +645,261 @@ def train_regularized_ot_GAN(
                            os.path.join(
                                models_path,
                                f'discriminator_step_{steps}_epoch_{epochs}.pt'))
+
+        steps += 1
+
+        if steps > config.train.maximum_steps:
+            print("Reached maximum amount of steps. Quitting.")
+            break
+
+
+def train_mswd_gan(config: configuration.Configuration,
+                   train_config: ModelTrainingConfiguration) -> None:
+    device = config.runtime_options['device']
+
+    generator_network = models.load_model(
+        config.models.generator.type,
+        latent_dim=train_config.latent_dimension,
+        output_dim=train_config.data_dimension,
+        **config.models.generator.options)
+    generator_network.to(device)
+
+    generator_optimizer = load_optimizer(config.optimizers.generator.type,
+                                         generator_network.parameters(),
+                                         **config.optimizers.generator.options)
+
+    discriminator_network = models.load_model(
+        config.models.discriminator.type,
+        input_dim=train_config.data_dimension,
+        final_linear_bias=False,
+        **config.models.discriminator.options)
+
+    discriminator_network.to(device)
+    discriminator_optimizer = load_optimizer(
+        config.optimizers.discriminator.type,
+        discriminator_network.parameters(),
+        **config.optimizers.discriminator.options)
+
+    images_path = os.path.join(config.train.output_directory, 'images')
+    models_path = os.path.join(config.train.output_directory, 'models')
+
+    os.makedirs(config.train.output_directory, exist_ok=True)
+    os.makedirs(images_path, exist_ok=True)
+    os.makedirs(models_path, exist_ok=True)
+
+    if config.train.use_checkpoints:
+        steps, epochs = load_checkpoints(generator_network,
+                                         discriminator_network,
+                                         models_path)
+    else:
+        steps = 0
+        epochs = 0
+
+    def data_iterator() -> Iterator[torch.Tensor]:
+        nonlocal epochs
+
+        while True:
+            print(f"Epoch {epochs}")
+            for data in train_config.dataloader:
+                yield data
+
+            epochs += 1
+
+    def surrogate_loss(disc_real: torch.Tensor, disc_fake: torch.Tensor) \
+            -> torch.Tensor:
+        return disc_real.sum() - disc_fake.sum()
+        # return -(F.sigmoid(disc_real).log().sum() + (1 - F.sigmoid(disc_fake)).log().sum())
+
+    data_it = data_iterator()
+
+    batch_size_fake = config.train.batch_size_fake \
+        if config.train.batch_size_fake else config.train.batch_size
+
+    while epochs < config.train.maximum_epochs:
+        print(f"Step {steps}")
+
+        for i in range(config.train.critic_steps):
+            data_real: torch.Tensor = next(data_it)[0].to(device)
+            batch_size = data_real.shape[0]
+            # data_real = data_real.reshape(batch_size, -1)
+
+            img_size = data_real.shape[1:]
+
+            with torch.no_grad():
+                z = torch.randn((batch_size_fake,
+                                 train_config.latent_dimension),
+                                device=device)
+                data_fake = generator_network(z).reshape(
+                    batch_size_fake, *img_size)
+
+            disc_real = discriminator_network(data_real)
+            disc_fake = discriminator_network(data_fake)
+
+            # gp = gradient_penalty(discriminator_network,
+            #                       data_real, data_fake, 10)
+
+            loss = surrogate_loss(disc_real, disc_fake)  # + gp
+
+            # alpha = torch.rand(batch_size, 1, device=device) \
+            #     .expand(data_real.size())
+            #
+            # interpolates = alpha * data_real + \
+            #                     ((1 - alpha) * data_fake[:batch_size])
+            # disc_intp = discriminator_network(interpolates)
+
+            # loss = surrogate_loss(disc_real, disc_intp)
+
+            print(f'Discriminator loss: {loss.item()}')
+
+            discriminator_optimizer.zero_grad()
+            loss.backward()
+            discriminator_optimizer.step()
+
+            # discriminator_network.normalize_final_linear()
+
+        data_real: torch.Tensor = next(data_it)[0].to(device)
+        batch_size = data_real.shape[0]
+        # data_real = data_real.reshape(batch_size, -1)
+
+        z = torch.randn((batch_size,
+                         train_config.latent_dimension),
+                        device=device)
+        data_fake = generator_network(z).reshape(data_real.shape)
+            #.reshape(batch_size, -1)
+
+        disc_real = discriminator_network(data_real)
+        disc_fake = discriminator_network(data_fake)
+
+        disc_real_sorted = disc_real.sort(dim=0)[0]
+        disc_fake_sorted = disc_fake.sort(dim=0)[0]
+
+        loss = (disc_real_sorted - disc_fake_sorted).pow(2).sum()
+
+        print(f'Generator loss: {loss.item()}')
+
+        generator_optimizer.zero_grad()
+        loss.backward()
+        generator_optimizer.step()
+
+        if steps % config.train.save_interval == 0 and steps > 0:
+            print("Saving images and models")
+            train_config.save_generated_data(generator_network, data_fake,
+                                             images_path, steps, epochs)
+
+        steps += 1
+
+        if steps > config.train.maximum_steps:
+            print("Reached maximum amount of steps. Quitting.")
+            break
+
+
+def train_wgan_gp(config: configuration.Configuration,
+                  train_config: ModelTrainingConfiguration):
+
+    device = config.runtime_options['device']
+
+    generator_network = models.load_model(
+        config.models.generator.type,
+        latent_dim=train_config.latent_dimension,
+        output_dim=train_config.data_dimension,
+        **config.models.generator.options)
+    generator_network.to(device)
+
+    generator_optimizer = load_optimizer(config.optimizers.generator.type,
+                                         generator_network.parameters(),
+                                         **config.optimizers.generator.options)
+
+    images_path = os.path.join(config.train.output_directory, 'images')
+    models_path = os.path.join(config.train.output_directory, 'models')
+
+    os.makedirs(config.train.output_directory, exist_ok=True)
+    os.makedirs(images_path, exist_ok=True)
+    os.makedirs(models_path, exist_ok=True)
+
+    discriminator_network = models.load_model(
+        config.models.discriminator.type,
+        input_dim=train_config.data_dimension,
+        **config.models.discriminator.options)
+
+    discriminator_network.to(device)
+    discriminator_optimizer = load_optimizer(
+        config.optimizers.discriminator.type,
+        discriminator_network.parameters(),
+        **config.optimizers.discriminator.options)
+
+    if config.train.use_checkpoints:
+        steps, epochs = load_checkpoints_single_file(
+            generator_network, discriminator_network, models_path)
+    else:
+        steps = 0
+        epochs = 0
+
+    def data_iterator() -> Iterator[torch.Tensor]:
+        nonlocal epochs
+
+        while True:
+            print(f"Epoch {epochs}")
+            for data in train_config.dataloader:
+                yield data
+
+            epochs += 1
+
+    def get_imgs() -> Tuple[torch.Tensor, torch.Tensor]:
+        imgs_cpu, _ = next(data_it)
+        batch_size = imgs_cpu.size(0)
+        imgs_cuda = imgs_cpu.to(device) #.reshape(batch_size, -1)
+
+        img_shape = imgs_cuda.shape[1:]
+
+        z = torch.randn((batch_size, train_config.latent_dimension),
+                        device=device)
+        imgs_generated = generator_network(z).reshape(-1, *img_shape)
+
+        return imgs_cuda, imgs_generated
+
+    data_it = data_iterator()
+
+    while epochs < config.train.maximum_epochs:
+        print(f"Step {steps}")
+
+        # === Train discriminator ===
+
+        for _ in range(config.train.critic_steps):
+            imgs, generated_samples = get_imgs()
+
+            penalty = gradient_penalty(discriminator_network,
+                                       imgs, generated_samples)
+            disc_generated = discriminator_network(generated_samples)
+            disc_real = -discriminator_network(imgs)
+            loss_discriminator = (-(disc_generated.mean() + disc_real.mean()) +
+                                  penalty)
+
+            discriminator_optimizer.zero_grad()
+            loss_discriminator.backward()
+            discriminator_optimizer.step()
+
+        # === Train generator ===
+
+        imgs, generated_samples = get_imgs()
+
+        disc_generated = discriminator_network(generated_samples)
+        disc_real = -discriminator_network(imgs)
+        loss_generator = disc_generated.mean() + disc_real.mean()
+
+        generator_optimizer.zero_grad()
+        loss_generator.backward()
+        generator_optimizer.step()
+
+        if steps % config.train.save_interval == 0 and steps > 0:
+            print("Saving images and models")
+            train_config.save_generated_data(
+                generator_network, generated_samples,
+                images_path, steps, epochs)
+
+            torch.save({
+                'generator': generator_network.state_dict(),
+                'discriminator': discriminator_network.state_dict(),
+            }, os.path.join(models_path, f'step_{steps}_epoch_{epochs}.pt'))
 
         steps += 1
 
@@ -642,12 +946,22 @@ def main():
         print("CUDA is not available, falling back to CPU")
         config.runtime_options['device'] = torch.device('cpu')
 
-    if config.dataset.type == 'mnist':
-        train_mnist(config)
-    elif config.dataset.type == 'celeba':
-        train_celeba(config)
+    if config.train.type == 'ot_gan':
+        if config.dataset.type == 'mnist':
+            train_mnist(config)
+        elif config.dataset.type == 'celeba':
+            train_celeba(config)
+        else:
+            raise Exception(f'Invalid dataset type: {config.dataset.type}')
+    elif config.train.type == 'mswd_gan':
+        print("MSWD GAN")
+        train_configuration = MnistBalancedConfiguration(config)
+        train_mswd_gan(config, train_configuration)
+    elif config.train.type == 'wgan_gp':
+        train_configuration = MnistBalancedConfiguration(config)
+        train_wgan_gp(config, train_configuration)
     else:
-        raise Exception(f'Unknown dataset type: {config.dataset.type}')
+        raise Exception(f'Invalid training type: {config.train.type}')
 
 
 if __name__ == "__main__":

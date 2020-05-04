@@ -1,10 +1,9 @@
 import math
-from typing import Tuple, Any, Dict
+from typing import  Any
 
 import torch
 import torch.nn as nn
-
-from configuration import Configuration
+import torch.nn.functional as F
 
 DIM = 64
 OUTPUT_DIM = 64  # 64*64*3
@@ -350,25 +349,10 @@ class MnistGenerator(nn.Module):
 
 
 class MnistDiscriminator(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, final_linear_bias=True):
         super().__init__()
 
-        self.model = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.LeakyReLU(0.2),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2),
-            nn.Linear(256, 1)
-        )
-
-    def forward(self, img):
-        # return discriminator score for img
-        return self.model(img)
-
-
-class MnistDiscriminatorExtraDeep(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
+        self.input_dim = input_dim
 
         self.model = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -377,18 +361,88 @@ class MnistDiscriminatorExtraDeep(nn.Module):
             nn.LeakyReLU(0.2),
             nn.Linear(256, 128),
             nn.LeakyReLU(0.2),
-            nn.Linear(128, 1)
+            nn.Linear(128, 64),
+            nn.LeakyReLU(0.2),
         )
 
+        self.final_linear = nn.Linear(64, 1, bias=final_linear_bias)
+
+        # self.normalize_final_linear()
+
     def forward(self, img):
+        img = img.reshape(-1, self.input_dim)
+
+        out = self.model(img)
         # return discriminator score for img
-        return self.model(img)
+        return self.final_linear(out)
+
+    def normalize_final_linear(self):
+        self.final_linear.weight.data = F.normalize(
+            self.final_linear.weight.data, p=2, dim=1)
+
+
+class MnistCNNDiscriminator(nn.Module):
+    def __init__(self, input_dim, final_linear_bias=True):
+        super().__init__()
+
+        self.model = nn.Sequential(
+            # 28 x 28 x 1
+            nn.Conv2d(1, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            # 28 x 28 x 32
+            nn.MaxPool2d(3, 2, 1),
+
+            # 14 x 14 x 32
+            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            # 14 x 14 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 7 x 7 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            # 7 x 7 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 4 x 4 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            # 4 x 4 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 2 x 2 x 64
+        )
+
+        self.final_linear = nn.Linear(256, 1, bias=final_linear_bias)
+
+        # self.normalize_final_linear()
+
+    def forward(self, img):
+        out = self.model(img)
+        # return discriminator score for img
+        return self.final_linear(out.reshape(-1, 256))
+
+    def normalize_final_linear(self):
+        self.final_linear.weight.data = F.normalize(
+            self.final_linear.weight.data, p=2, dim=1)
 
 
 _models = {
     'MnistGenerator': MnistGenerator,
     'MnistDiscriminator': MnistDiscriminator,
-    'MnistDiscriminatorExtraDeep': MnistDiscriminatorExtraDeep,
+    'MnistCNNDiscriminator': MnistCNNDiscriminator,
     'GoodGenerator': GoodGenerator,
     'GoodDiscriminator': GoodDiscriminator
 }

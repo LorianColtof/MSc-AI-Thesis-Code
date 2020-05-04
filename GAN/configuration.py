@@ -56,6 +56,7 @@ config_schema = {
                 "critic_steps": default_critic_steps
             },
             "properties": {
+                "type": {"type": "string"},
                 "output_directory": {"type": "string"},
                 "save_interval": {"type": "integer"},
                 "maximum_epochs": {"type": "integer"},
@@ -86,6 +87,7 @@ class GeneratorDiscriminator(NamedTuple):
 
 
 class Train(NamedTuple):
+    type: str
     output_directory: str
     batch_size: int
     latent_dimension: int
