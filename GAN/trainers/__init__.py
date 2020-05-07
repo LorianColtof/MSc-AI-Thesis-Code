@@ -30,7 +30,10 @@ class AbstractBaseTrainer(ABC):
 
     def train(self):
         device = self.config.runtime_options['device']
-        self.dataset = datasets.load_dataset(self.config)
+        self.dataset = datasets.load_dataset(
+            self.config.dataset, device=device,
+            batch_size=self.config.train.batch_size,
+            latent_dimension=self.config.train.latent_dimension)
 
         self._initialize_networks()
 
@@ -99,11 +102,7 @@ class AbstractBaseTrainer(ABC):
 
                 print(f'Discriminator loss: {loss.item()}')
 
-                self.discriminator_optimizer.zero_grad()
-                loss.backward()
-                self.discriminator_optimizer.step()
-
-                self.discriminator_network.normalize_final_linear()
+                self._optimize_discriminator(loss)
 
             data_real: torch.Tensor = next(self.data_it)[0].to(device)
             batch_size = data_real.shape[0]
@@ -117,9 +116,7 @@ class AbstractBaseTrainer(ABC):
 
             print(f'Generator loss: {loss.item()}')
 
-            self.generator_optimizer.zero_grad()
-            loss.backward()
-            self.generator_optimizer.step()
+            self._optimize_generator(loss)
 
             if steps % self.config.train.save_interval == 0 and steps > 0:
                 print("Saving images and models")
@@ -172,3 +169,13 @@ class AbstractBaseTrainer(ABC):
                             batch_size_fake: int,
                             data_real: Tensor) -> Tensor:
         pass
+
+    def _optimize_discriminator(self, loss: Tensor):
+        self.discriminator_optimizer.zero_grad()
+        loss.backward()
+        self.discriminator_optimizer.step()
+
+    def _optimize_generator(self, loss: Tensor):
+        self.generator_optimizer.zero_grad()
+        loss.backward()
+        self.generator_optimizer.step()

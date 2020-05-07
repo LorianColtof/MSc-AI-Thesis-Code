@@ -4,7 +4,8 @@ import torch
 
 import configuration
 from trainers import AbstractBaseTrainer
-from trainers.mswd_trainer import MaxSlicedWassersteinLossTrainer
+from trainers.mswd_trainer import MaxSlicedWassersteinLossTrainer, \
+    SampledSlicedWassersteinLossTrainer
 from trainers.ot_trainer import OTLossTrainer
 from trainers.wgan_gp_trainer import WassersteinGPLossTrainer
 
@@ -25,12 +26,16 @@ def main():
         print("CUDA is not available, falling back to CPU")
         config.runtime_options['device'] = torch.device('cpu')
 
+    torch.random.manual_seed(42)
+
     trainer: AbstractBaseTrainer
 
     if config.train.type == 'ot_gan':
         trainer = OTLossTrainer(config)
     elif config.train.type == 'mswd_gan':
         trainer = MaxSlicedWassersteinLossTrainer(config)
+    elif config.train.type == 'sampled_swd_gan':
+        trainer = SampledSlicedWassersteinLossTrainer(config)
     elif config.train.type == 'wgan_gp':
         trainer = WassersteinGPLossTrainer(config)
     else:

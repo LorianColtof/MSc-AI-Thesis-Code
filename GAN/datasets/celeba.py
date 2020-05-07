@@ -7,14 +7,15 @@ from PIL.Image import Image
 from torchvision import datasets
 from torchvision.transforms import transforms
 
-from configuration import Configuration
+from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 
 
 class CelebaDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
 
-    def __init__(self, config: Configuration):
+    def __init__(self, dataset_config: Dataset, device: torch.device,
+                 batch_size: int, latent_dimension: int):
         crop_size = 108
         re_size = 64
         offset_height = (218 - crop_size) // 2
@@ -36,16 +37,15 @@ class CelebaDataset(AbstractBaseDataset):
         # wget https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets
         # /celeba.zip
         # Make sure to change to correct path!
-        imagenet_data = datasets.ImageFolder(config.dataset.directory,
+        imagenet_data = datasets.ImageFolder(dataset_config.directory,
                                              transform=transform)
         self.dataloader = torch.utils.data.DataLoader(
-            imagenet_data, batch_size=config.train.batch_size,
+            imagenet_data, batch_size=batch_size,
             shuffle=True, num_workers=4)
 
         # Fix latent samples for visualization purposes
         self._source_samples_plot = torch.randn(
-            (5 * 5, config.train.latent_dimension),
-            device=config.runtime_options['device'])
+            (5 * 5, latent_dimension), device=device)
 
     def _imshow(self, img):
         img = img / 2 + 0.5  # unnormalize

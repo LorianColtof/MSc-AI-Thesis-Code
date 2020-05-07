@@ -6,28 +6,28 @@ import torchvision.transforms as transforms
 from torchvision.datasets import MNIST
 from torchvision.utils import save_image
 
-from configuration import Configuration
+from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 
 
 class MnistDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
 
-    def __init__(self, config: Configuration):
+    def __init__(self, dataset_config: Dataset, device: torch.device,
+                 batch_size: int, latent_dimension: int):
         self.data_dimension = 28 * 28
 
         self.dataloader = torch.utils.data.DataLoader(
-            MNIST(os.path.join(config.dataset.directory, 'mnist'),
+            MNIST(os.path.join(dataset_config.directory, 'mnist'),
                   train=True, download=True,
                   transform=transforms.Compose([
                       transforms.ToTensor(),
                       transforms.Normalize((0.5,), (0.5,))])),
-            batch_size=config.train.batch_size, shuffle=True,
+            batch_size=batch_size, shuffle=True,
             pin_memory=True)
 
         self._source_samples_plot = torch.randn(
-            (5 * 5, config.train.latent_dimension),
-            device=config.runtime_options['device'])
+            (5 * 5, latent_dimension), device=device)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
                             images_path: str,

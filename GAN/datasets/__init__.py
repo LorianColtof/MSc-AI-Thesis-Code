@@ -1,4 +1,6 @@
-from configuration import Configuration
+from typing import Any
+
+from configuration import Configuration, Dataset
 from datasets.base import AbstractBaseDataset
 from datasets.celeba import CelebaDataset
 from datasets.mnist import MnistDataset
@@ -10,10 +12,10 @@ _datasets = {
 }
 
 
-def load_dataset(config: Configuration) -> AbstractBaseDataset:
+def load_dataset(dataset_config: Dataset, **kwargs: Any) -> AbstractBaseDataset:
     try:
-        dataset = _datasets[config.dataset.type]
+        dataset = _datasets[dataset_config.type]
     except KeyError:
-        raise Exception(f"Dataset '{config.dataset.type}' does not exist")
+        raise Exception(f"Dataset '{dataset_config.type}' does not exist")
 
-    return dataset(config)
+    return dataset(dataset_config=dataset_config, **kwargs)
