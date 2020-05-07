@@ -382,7 +382,8 @@ class MnistDiscriminator(nn.Module):
 
 
 class MnistCNNDiscriminator(nn.Module):
-    def __init__(self, input_dim, final_linear_bias=True):
+    def __init__(self, input_dim, include_final_linear=True,
+                 final_linear_bias=True):
         super().__init__()
 
         self.model = nn.Sequential(
@@ -425,18 +426,25 @@ class MnistCNNDiscriminator(nn.Module):
             # 2 x 2 x 64
         )
 
-        self.final_linear = nn.Linear(256, 1, bias=final_linear_bias)
+        self.include_final_linear = include_final_linear
 
-        # self.normalize_final_linear()
+        if include_final_linear:
+            self.final_linear = nn.Linear(256, 1, bias=final_linear_bias)
+
+        self.normalize_final_linear()
 
     def forward(self, img):
         out = self.model(img)
-        # return discriminator score for img
-        return self.final_linear(out.reshape(-1, 256))
+
+        if self.include_final_linear:
+            return self.final_linear(out.reshape(-1, 256))
+        else:
+            return out.reshape(-1, 256)
 
     def normalize_final_linear(self):
-        self.final_linear.weight.data = F.normalize(
-            self.final_linear.weight.data, p=2, dim=1)
+        if self.include_final_linear:
+            self.final_linear.weight.data = F.normalize(
+                self.final_linear.weight.data, p=2, dim=1)
 
 
 _models = {

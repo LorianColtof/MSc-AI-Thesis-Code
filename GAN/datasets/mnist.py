@@ -1,74 +1,39 @@
 import os
-import errno
 
-import numpy as np
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-import torchvision
+from torchvision.datasets import MNIST
+from torchvision.utils import save_image
+
+from configuration import Configuration
+from datasets.base import AbstractBaseDataset
 
 
-class toTensor:
-    def __init__(self):
-        pass
+class MnistDataset(AbstractBaseDataset):
+    _source_samples_plot: torch.Tensor
 
-    def __call__(self, img):
-        img = np.array(img)
-        if len(img.shape) == 2:
-            # Add channel dimension
-            img = img[:, :, None]
+    def __init__(self, config: Configuration):
+        self.data_dimension = 28 * 28
 
-        img = np.array(img).transpose(2, 0, 1)
-        return torch.from_numpy(img)
+        self.dataloader = torch.utils.data.DataLoader(
+            MNIST(os.path.join(config.dataset.directory, 'mnist'),
+                  train=True, download=True,
+                  transform=transforms.Compose([
+                      transforms.ToTensor(),
+                      transforms.Normalize((0.5,), (0.5,))])),
+            batch_size=config.train.batch_size, shuffle=True,
+            pin_memory=True)
 
+        self._source_samples_plot = torch.randn(
+            (5 * 5, config.train.latent_dimension),
+            device=config.runtime_options['device'])
 
-class Flatten:
-    def __init__(self):
-        pass
+    def save_generated_data(self, generator_network: torch.nn.Module,
+                            images_path: str,
+                            steps: int, epochs: int) -> None:
 
-    def __call__(self, img):
-        return img.view(-1)
-
-
-class toFloat:
-    def __init__(self):
-        pass
-
-    def __call__(self, img):
-        return img.float()
-
-
-def mnist(root='./data/', batch_size=128, download=True):
-    train_transforms = transforms.Compose([
-        transforms.Pad(int(np.ceil(28 * 0.05)), padding_mode='edge'),
-        transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),
-        transforms.CenterCrop(28),
-        toTensor(),
-        toFloat(),
-        Flatten()
-    ])
-    data_transforms = transforms.Compose([
-        transforms.ToTensor(),
-        toTensor(),
-        toFloat(),
-        Flatten()
-    ])
-
-    dataset = torchvision.datasets.MNIST(
-        root, train=True, transform=train_transforms, target_transform=None,
-        download=True)
-    test_set = torchvision.datasets.MNIST(
-        root, train=False, transform=data_transforms, target_transform=None,
-        download=True)
-
-    train_dataset = data.dataset.Subset(dataset, np.arange(40000))
-    val_dataset = data.dataset.Subset(dataset, np.arange(40000, 50000))
-
-    trainloader = data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    valloader = data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    testloader = data.DataLoader(
-        test_set, batch_size=batch_size, shuffle=False, num_workers=4)
-
-    return trainloader, valloader, testloader
+        data_fake = generator_network(self._source_samples_plot)
+        save_image(data_fake.reshape(-1, 1, 28, 28),
+                   os.path.join(images_path, 'epoch_{}_step_{}.png'.format(
+                       epochs, steps)), nrow=5, normalize=True)
