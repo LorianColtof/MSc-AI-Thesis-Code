@@ -13,6 +13,8 @@ from datasets.base import AbstractBaseDataset
 class MnistDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
 
+    _sample_image_size = 10
+
     def __init__(self, dataset_config: Dataset, device: torch.device,
                  batch_size: int, latent_dimension: int):
         self.data_dimension = 28 * 28
@@ -27,7 +29,7 @@ class MnistDataset(AbstractBaseDataset):
             pin_memory=True)
 
         self._source_samples_plot = torch.randn(
-            (5 * 5, latent_dimension), device=device)
+            (self._sample_image_size ** 2, latent_dimension), device=device)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
                             images_path: str,
@@ -36,4 +38,5 @@ class MnistDataset(AbstractBaseDataset):
         data_fake = generator_network(self._source_samples_plot)
         save_image(data_fake.reshape(-1, 1, 28, 28),
                    os.path.join(images_path, 'epoch_{}_step_{}.png'.format(
-                       epochs, steps)), nrow=5, normalize=True)
+                       epochs, steps)),
+                   nrow=self._sample_image_size, normalize=True)
