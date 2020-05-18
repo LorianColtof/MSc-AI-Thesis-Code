@@ -25,6 +25,8 @@ class AbstractBaseTrainer(ABC):
 
     data_it: Iterator[Tensor]
 
+    optimize_discriminator = True
+
     def __init__(self, config: Configuration):
         self.config = config
 
@@ -48,10 +50,13 @@ class AbstractBaseTrainer(ABC):
             self.generator_network.parameters(),
             **self.config.optimizers.generator.options)
 
-        self.discriminator_optimizer = self._load_optimizer(
-            self.config.optimizers.discriminator.type,
-            self.discriminator_network.parameters(),
-            **self.config.optimizers.discriminator.options)
+        if list(self.discriminator_network.parameters()):
+            self.discriminator_optimizer = self._load_optimizer(
+                self.config.optimizers.discriminator.type,
+                self.discriminator_network.parameters(),
+                **self.config.optimizers.discriminator.options)
+        else:
+            self.optimize_discriminator = False
 
         images_path = os.path.join(self.config.train.output_directory,
                                    'images')
@@ -89,20 +94,21 @@ class AbstractBaseTrainer(ABC):
                 steps < self.config.train.maximum_steps:
             print(f"Step {steps}")
 
-            for _ in range(self.config.train.critic_steps):
-                data_real: torch.Tensor = next(self.data_it)[0].to(device)
-                batch_size = data_real.shape[0]
+            if self.optimize_discriminator:
+                for _ in range(self.config.train.critic_steps):
+                    data_real: torch.Tensor = next(self.data_it)[0].to(device)
+                    batch_size = data_real.shape[0]
 
-                step_batch_size_fake = batch_size if self.use_same_batch_sizes \
-                    else batch_size_fake
+                    step_batch_size_fake = batch_size \
+                        if self.use_same_batch_sizes else batch_size_fake
 
-                loss = self._get_discriminator_loss(batch_size,
-                                                    step_batch_size_fake,
-                                                    data_real)
+                    loss = self._get_discriminator_loss(batch_size,
+                                                        step_batch_size_fake,
+                                                        data_real)
 
-                print(f'Discriminator loss: {loss.item()}')
+                    print(f'Discriminator loss: {loss.item()}')
 
-                self._optimize_discriminator(loss)
+                    self._optimize_discriminator(loss)
 
             data_real: torch.Tensor = next(self.data_it)[0].to(device)
             batch_size = data_real.shape[0]
