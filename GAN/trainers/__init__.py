@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from typing import Tuple, Iterator, Any, Type
+from typing import Tuple, Iterator, Any, Type, List, Mapping, Dict
 
 import torch
 from torch import Tensor
@@ -16,10 +16,10 @@ class AbstractBaseTrainer(ABC):
     dataset: datasets.AbstractBaseDataset
 
     generator_network: Module
-    discriminator_network: Module
+    discriminator_networks: List[Module] = []
 
     generator_optimizer: Optimizer
-    discriminator_optimizer: Optimizer
+    discriminator_optimizers: Dict[Module, Optimizer] = {}
 
     use_same_batch_sizes: bool = False
 
@@ -40,22 +40,26 @@ class AbstractBaseTrainer(ABC):
         self._initialize_networks()
 
         assert self.generator_network is not None
-        assert self.discriminator_network is not None
 
         self.generator_network.to(device)
-        self.discriminator_network.to(device)
+
+        for network in self.discriminator_networks:
+            network.to(device)
 
         self.generator_optimizer = self._load_optimizer(
             self.config.optimizers.generator.type,
             self.generator_network.parameters(),
             **self.config.optimizers.generator.options)
 
-        if list(self.discriminator_network.parameters()):
-            self.discriminator_optimizer = self._load_optimizer(
-                self.config.optimizers.discriminator.type,
-                self.discriminator_network.parameters(),
-                **self.config.optimizers.discriminator.options)
-        else:
+        for discriminator in self.discriminator_networks:
+            if list(discriminator.parameters()):
+                self.discriminator_optimizers[discriminator] = \
+                    self._load_optimizer(
+                        self.config.optimizers.discriminator.type,
+                        discriminator.parameters(),
+                        **self.config.optimizers.discriminator.options)
+
+        if not self.discriminator_optimizers:
             self.optimize_discriminator = False
 
         images_path = os.path.join(self.config.train.output_directory,
@@ -95,20 +99,26 @@ class AbstractBaseTrainer(ABC):
             print(f"Step {steps}")
 
             if self.optimize_discriminator:
-                for _ in range(self.config.train.critic_steps):
-                    data_real: torch.Tensor = next(self.data_it)[0].to(device)
-                    batch_size = data_real.shape[0]
+                for discriminator_index, discriminator in \
+                        enumerate(self.discriminator_networks):
+                    for _ in range(self.config.train.critic_steps):
+                        data_real: torch.Tensor = next(
+                            self.data_it)[0].to(device)
+                        batch_size = data_real.shape[0]
 
-                    step_batch_size_fake = batch_size \
-                        if self.use_same_batch_sizes else batch_size_fake
+                        step_batch_size_fake = batch_size \
+                            if self.use_same_batch_sizes else batch_size_fake
 
-                    loss = self._get_discriminator_loss(batch_size,
-                                                        step_batch_size_fake,
-                                                        data_real)
+                        loss = self._get_discriminator_loss(
+                            discriminator_index, batch_size,
+                            step_batch_size_fake,
+                            data_real)
 
-                    print(f'Discriminator loss: {loss.item()}')
+                        print(f'Discriminator {discriminator_index} loss: '
+                              f'{loss.item()}')
 
-                    self._optimize_discriminator(loss)
+                        self._optimize_discriminator(
+                            loss, self.discriminator_optimizers[discriminator])
 
             data_real: torch.Tensor = next(self.data_it)[0].to(device)
             batch_size = data_real.shape[0]
@@ -128,8 +138,8 @@ class AbstractBaseTrainer(ABC):
                 print("Saving images and models")
 
                 with torch.no_grad():
-                    self.dataset.save_generated_data(self.generator_network,
-                                                     images_path, steps, epochs)
+                    self.dataset.save_generated_data(
+                        self.generator_network, images_path, steps, epochs)
 
                 self._save_checkpoints(models_path, epochs, steps)
 
@@ -164,6 +174,7 @@ class AbstractBaseTrainer(ABC):
 
     @abstractmethod
     def _get_discriminator_loss(self,
+                                discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
@@ -176,10 +187,10 @@ class AbstractBaseTrainer(ABC):
                             data_real: Tensor) -> Tensor:
         pass
 
-    def _optimize_discriminator(self, loss: Tensor):
-        self.discriminator_optimizer.zero_grad()
+    def _optimize_discriminator(self, loss: Tensor, optimizer: Optimizer):
+        optimizer.zero_grad()
         loss.backward()
-        self.discriminator_optimizer.step()
+        optimizer.step()
 
     def _optimize_generator(self, loss: Tensor):
         self.generator_optimizer.zero_grad()

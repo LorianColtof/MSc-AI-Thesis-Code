@@ -98,6 +98,7 @@ class Train(NamedTuple):
     batch_size_fake: Optional[int] = None
     use_dual_critic_networks: bool = False
     use_checkpoints: bool = True
+    use_double_dual_transform: bool = True
 
 
 class RuntimeOptions(TypedDict):

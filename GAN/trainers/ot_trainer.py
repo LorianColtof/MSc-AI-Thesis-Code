@@ -125,14 +125,58 @@ class OTLossTrainer(AbstractBaseTrainer):
             output_dim=self.dataset.data_dimension,
             **self.config.models.generator.options)
 
-        self.discriminator_network = models.load_model(
+        self.discriminator_networks.append(models.load_model(
             self.config.models.discriminator.type,
             input_dim=self.dataset.data_dimension,
-            **self.config.models.discriminator.options)
+            **self.config.models.discriminator.options))
 
-    def _load_checkpoints(self, checkpoints_path: str) -> Tuple[int, int]:
-        print("Loading checkpoints")
+        if self.config.train.use_dual_critic_networks:
+            self.discriminator_networks.append(models.load_model(
+                self.config.models.discriminator.type,
+                input_dim=self.dataset.data_dimension,
+                **self.config.models.discriminator.options))
 
+    def _load_checkpoints_dual(self, checkpoints_path: str) -> Tuple[int, int]:
+        file_regex = re.compile(r'step_(\d+)_epoch_(\d+).pt')
+
+        files = os.listdir(checkpoints_path)
+        checkpoints = {}
+
+        for file in files:
+            match = file_regex.match(file)
+            if not match:
+                continue
+
+            step = int(match.group(1))
+            epoch = int(match.group(2))
+
+            checkpoints[step] = (file, epoch)
+
+        if not checkpoints:
+            return 0, 0
+
+        load_step = max(checkpoints.keys())
+
+        load_epoch = checkpoints[load_step][1]
+
+        checkpoint_path = os.path.join(checkpoints_path,
+                                       checkpoints[load_step][0])
+        checkpoint_dict = torch.load(checkpoint_path)
+
+        self.generator_network.load_state_dict(checkpoint_dict['generator'])
+        self.generator_network.train()
+
+        self.discriminator_networks[0].load_state_dict(
+            checkpoint_dict['discriminator0'])
+        self.discriminator_networks[0].train()
+        self.discriminator_networks[1].load_state_dict(
+            checkpoint_dict['discriminator1'])
+        self.discriminator_networks[1].train()
+
+        return load_step, load_epoch
+
+    def _load_checkpoints_single(self, checkpoints_path: str) \
+            -> Tuple[int, int]:
         file_regex = re.compile(
             r'(discriminator|generator)_step_(\d+)_epoch_(\d+).pt')
 
@@ -155,7 +199,6 @@ class OTLossTrainer(AbstractBaseTrainer):
                 generator_checkpoints[step] = (file, epoch)
 
         if not discriminator_checkpoints or not generator_checkpoints:
-            print("No checkpoints available to load.")
             return 0, 0
 
         max_step_discriminator = max(discriminator_checkpoints.keys())
@@ -180,26 +223,76 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         discriminator_checkpoint_path = os.path.join(
             checkpoints_path, discriminator_checkpoints[load_step][0])
-        self.discriminator_network.load_state_dict(
+        self.discriminator_networks[0].load_state_dict(
             torch.load(discriminator_checkpoint_path))
-        self.discriminator_network.train()
+        self.discriminator_networks[0].train()
 
-        print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
+        return load_step, load_epoch
 
-        return load_step + 1, load_epoch
+    def _load_checkpoints(self, checkpoints_path: str) \
+            -> Tuple[int, int]:
+        print("Loading checkpoints")
 
-    def _save_checkpoints(self, checkpoints_path: str, epoch: int,
-                          step: int) -> None:
+        if self.config.train.use_dual_critic_networks:
+            step, epoch = self._load_checkpoints_dual(checkpoints_path)
+        else:
+            step, epoch = self._load_checkpoints_single(checkpoints_path)
+
+        if step == 0:
+            print("No checkpoints available to load.")
+            return 0, 0
+
+        print(f"Loaded checkpoints at step {step} (epoch {epoch})")
+
+        return step + 1, epoch
+
+    def _save_checkpoints_single(self, checkpoints_path: str, epoch: int,
+                                 step: int) -> None:
         torch.save(self.generator_network.state_dict(),
                    os.path.join(
                        checkpoints_path,
                        f'generator_step_{step}_epoch_{epoch}.pt'))
-        torch.save(self.discriminator_network.state_dict(),
+        torch.save(self.discriminator_networks[0].state_dict(),
                    os.path.join(
                        checkpoints_path,
                        f'discriminator_step_{step}_epoch_{epoch}.pt'))
 
-    def _get_discriminator_loss(self, batch_size_real: int,
+    def _save_checkpoints_double(self, checkpoints_path: str, epoch: int,
+                                 step: int) -> None:
+        torch.save({
+            'generator': self.generator_network.state_dict(),
+            'discriminator0': self.discriminator_networks[0].state_dict(),
+            'discriminator1': self.discriminator_networks[1].state_dict(),
+        }, os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt'))
+
+    def _save_checkpoints(self, checkpoints_path: str, epoch: int,
+                          step: int) -> None:
+        if self.config.train.use_dual_critic_networks:
+            self._save_checkpoints_double(checkpoints_path, epoch, step)
+        else:
+            self._save_checkpoints_single(checkpoints_path, epoch, step)
+
+    def _get_single_loss(self, data_fake: Tensor,
+                         cost_matrix_cross: Tensor) -> Tensor:
+        label_fake = self.discriminator_networks[0](data_fake)
+        label_real_transformed_fake = self.ot_loss_helper \
+            .dual_variable_transform(label_fake, cost_matrix_cross)
+
+        if self.config.train.use_double_dual_transform:
+            label_fake_double_transformed = self.ot_loss_helper \
+                .dual_variable_transform(label_real_transformed_fake,
+                                         cost_matrix_cross.T)
+
+            label_fake = label_fake_double_transformed
+
+        loss_val = self.ot_loss_helper.objective_function(
+            label_real_transformed_fake, label_fake, cost_matrix_cross)
+
+        return loss_val
+
+    def _get_discriminator_loss(self,
+                                discriminator_index: int,
+                                batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
 
@@ -216,12 +309,43 @@ class OTLossTrainer(AbstractBaseTrainer):
             data_fake_flat = data_fake.reshape(batch_size_fake, -1)
             cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat, 2, 2)
 
-        label_fake = self.discriminator_network(data_fake)
-        label_real_transformed_fake = self.ot_loss_helper \
-            .dual_variable_transform(label_fake, cost_matrix_cross)
+        if self.config.train.use_dual_critic_networks:
+            label_fake = self.discriminator_networks[0](data_fake)
+            label_real_transformed_fake = self.ot_loss_helper \
+                .dual_variable_transform(label_fake, cost_matrix_cross)
 
-        loss_val = self.ot_loss_helper.objective_function(
-            label_real_transformed_fake, label_fake, cost_matrix_cross)
+            label_real = self.discriminator_networks[1](data_real)
+            label_fake_transformed_real = self.ot_loss_helper \
+                .dual_variable_transform(label_real, cost_matrix_cross.T)
+
+            penalty_factor = 0.5 * 10 ** -1
+
+            if discriminator_index == 0:
+                transform_penalty = penalty_factor * (
+                        label_fake - label_fake_transformed_real).pow(2).sum()
+
+                loss_val = self.ot_loss_helper.objective_function(
+                    label_real_transformed_fake,
+                    label_fake, cost_matrix_cross)
+
+                print("Raw loss:", loss_val.item())
+                print("Penalty:", transform_penalty.item())
+
+                loss_val -= transform_penalty
+            else:
+                transform_penalty = penalty_factor * (
+                        label_real - label_real_transformed_fake).pow(2).sum()
+
+                loss_val = self.ot_loss_helper.objective_function(
+                    label_fake_transformed_real,
+                    label_real, cost_matrix_cross.T)
+
+                print("Raw loss:", loss_val.item())
+                print("Penalty:", transform_penalty.item())
+
+                loss_val -= transform_penalty
+        else:
+            loss_val = self._get_single_loss(data_fake, cost_matrix_cross)
 
         return -loss_val
 
@@ -239,12 +363,14 @@ class OTLossTrainer(AbstractBaseTrainer):
         data_fake_flat = data_fake.reshape(batch_size_fake, -1)
         cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat, 2, 2)
 
-        label_fake = self.discriminator_network(data_fake)
-        label_real_transformed_fake = self.ot_loss_helper \
-            .dual_variable_transform(label_fake, cost_matrix_cross)
+        if self.config.train.use_dual_critic_networks:
+            label_fake = self.discriminator_networks[0](data_fake)
+            label_real = self.discriminator_networks[1](data_real)
 
-        loss_val = self.ot_loss_helper.objective_function(
-            label_real_transformed_fake, label_fake, cost_matrix_cross)
+            loss_val = self.ot_loss_helper.objective_function(
+                label_real, label_fake, cost_matrix_cross)
+        else:
+            loss_val = self._get_single_loss(data_fake, cost_matrix_cross)
 
         return loss_val
 

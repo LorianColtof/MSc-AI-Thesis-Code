@@ -18,10 +18,10 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
             output_dim=self.dataset.data_dimension,
             **self.config.models.generator.options)
 
-        self.discriminator_network = models.load_model(
+        self.discriminator_networks.append(models.load_model(
             self.config.models.discriminator.type,
             input_dim=self.dataset.data_dimension,
-            **self.config.models.discriminator.options)
+            **self.config.models.discriminator.options))
 
     def _load_checkpoints(self, checkpoints_path: str) -> Tuple[int, int]:
         print("Loading checkpoints")
@@ -56,9 +56,9 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
         self.generator_network.load_state_dict(checkpoint_dict['generator'])
         self.generator_network.train()
 
-        self.discriminator_network.load_state_dict(
+        self.discriminator_networks[0].load_state_dict(
             checkpoint_dict['discriminator'])
-        self.discriminator_network.train()
+        self.discriminator_networks[0].train()
 
         print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
 
@@ -68,7 +68,7 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
                           step: int) -> None:
         torch.save({
             'generator': self.generator_network.state_dict(),
-            'discriminator': self.discriminator_network.state_dict(),
+            'discriminator': self.discriminator_networks[0].state_dict(),
         }, os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt'))
 
     def _generate_data(self, batch_size: int, data_real: Tensor) -> Tensor:
@@ -79,16 +79,18 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
 
         return data_fake
 
-    def _get_discriminator_loss(self, batch_size_real: int,
+    def _get_discriminator_loss(self,
+                                discriminator_index: int,
+                                batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
         with torch.no_grad():
             data_fake = self._generate_data(batch_size_fake, data_real)
 
-        penalty = gradient_penalty(self.discriminator_network,
+        penalty = gradient_penalty(self.discriminator_networks[0],
                                    data_real, data_fake)
-        disc_generated = self.discriminator_network(data_fake)
-        disc_real = -self.discriminator_network(data_real)
+        disc_generated = self.discriminator_networks[0](data_fake)
+        disc_real = -self.discriminator_networks[0](data_real)
         loss_discriminator = (-(disc_generated.mean() + disc_real.mean()) +
                               penalty)
 
@@ -98,8 +100,8 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
                             data_real: Tensor) -> Tensor:
         data_fake = self._generate_data(batch_size_fake, data_real)
 
-        disc_generated = self.discriminator_network(data_fake)
-        disc_real = -self.discriminator_network(data_real)
+        disc_generated = self.discriminator_networks[0](data_fake)
+        disc_real = -self.discriminator_networks[0](data_real)
         loss_generator = disc_generated.mean() + disc_real.mean()
 
         return loss_generator
