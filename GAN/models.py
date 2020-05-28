@@ -1,5 +1,5 @@
 import math
-from typing import  Any
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -348,6 +348,50 @@ class MnistGenerator(nn.Module):
         return self.model(z)
 
 
+class MnistCNNGenerator(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int):
+        super().__init__()
+
+        self.initial_fc = nn.Sequential(
+            nn.Linear(latent_dim, 4 * 4 * 1024),
+            nn.BatchNorm1d(4 * 4 * 1024),
+            nn.ReLU()
+        )
+
+        self.convolutions = nn.Sequential(
+            # 4 x 4 x 1024
+            nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+
+            # 8 x 8 x 512
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+
+            # 16 x 16 x 256
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+
+            # 32 x 32 x 128
+            nn.Conv2d(128, 128, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+
+            # 32 x 32 x 128
+            nn.Conv2d(128, 1, kernel_size=5, stride=1, padding=0),
+            nn.Sigmoid()
+        )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = self.initial_fc(input)
+        output = output.reshape(-1, 1024, 4, 4)
+        output = self.convolutions(output)
+
+        return output
+
+
 class MnistDiscriminator(nn.Module):
     def __init__(self, input_dim, final_linear_bias=True):
         super().__init__()
@@ -474,19 +518,9 @@ class IdentityDiscriminator(nn.Module):
                 self.final_linear.weight.data, p=2, dim=1)
 
 
-_models = {
-    'MnistGenerator': MnistGenerator,
-    'MnistDiscriminator': MnistDiscriminator,
-    'MnistCNNDiscriminator': MnistCNNDiscriminator,
-    'IdentityDiscriminator': IdentityDiscriminator,
-    'GoodGenerator': GoodGenerator,
-    'GoodDiscriminator': GoodDiscriminator
-}
-
-
 def load_model(model_type: str, **kwargs: Any) -> nn.Module:
     try:
-        model = _models[model_type]
+        model = globals()[model_type]
     except KeyError:
         raise Exception(f"Model '{model_type}' does not exist")
 

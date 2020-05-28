@@ -4,7 +4,7 @@ from typing import Tuple, Iterator
 
 import torch
 from torch import Tensor
-from torch.optim import Optimizer
+from torch.optim.optimizer import Optimizer
 
 import datasets
 import models
@@ -140,10 +140,16 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
 
         self.data_iterator_directions = data_iterator()
 
+        self.num_projections = self.config.loss.options[
+            'direction_sample_batch_size']
+
     def _sample_directions(self, device):
         with torch.no_grad():
             data_sample = next(self.data_iterator_directions)[0].to(device)
-            features_sample = self.discriminator_networks[0](data_sample)
+            
+            features_sample = self.discriminator_networks[0](
+                data_sample).reshape(self.num_projections, -1)
+
             features_norm = features_sample.norm(dim=1, p=2).unsqueeze(1)
 
             # Remove feature vectors with a very small norm to
@@ -156,14 +162,18 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
 
             return directions_sample
 
-    def _get_discriminator_loss(self, batch_size_real: int,
+    def _get_discriminator_loss(self,
+                                discriminator_index: int,
+                                batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
         with torch.no_grad():
             data_fake = self._generate_data(batch_size_fake, data_real)
 
-        features_real = self.discriminator_networks[0](data_real)
-        features_fake = self.discriminator_networks[0](data_fake)
+        features_real = self.discriminator_networks[0](data_real).reshape(
+            batch_size_real, -1)
+        features_fake = self.discriminator_networks[0](data_fake).reshape(
+            batch_size_fake, -1)
 
         directions_sample = self._sample_directions(data_real.device)
 
@@ -179,19 +189,34 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
                             data_real: Tensor) -> Tensor:
         data_fake = self._generate_data(batch_size_fake, data_real)
 
-        features_real = self.discriminator_networks[0](data_real)
-        features_fake = self.discriminator_networks[0](data_fake)
+        features_real = self.discriminator_networks[0](data_real).reshape(
+            batch_size_real, -1)
+        features_fake = self.discriminator_networks[0](data_fake).reshape(
+            batch_size_fake, -1)
+
+        # features_sample = torch.randn(
+        #     (self.num_projections, features_real.shape[1]),
+        #     device=data_real.device)
+        # features_norm = features_sample.norm(dim=1, p=2).unsqueeze(1)
+        #
+        # # Remove feature vectors with a very small norm to
+        # # (hopefully) prevent numerical issues.
+        # features_mask = features_norm > 1e-11
+        # features_sample = features_sample[features_mask.squeeze(), :]
+        # features_norm = features_norm[features_mask].unsqueeze(1)
+        #
+        # directions_sample = features_sample / features_norm
 
         directions_sample = self._sample_directions(data_real.device)
 
         disc_real = directions_sample @ features_real.T
         disc_fake = directions_sample @ features_fake.T
 
-        disc_real_sorted = disc_real.sort(dim=1)[0]
-        disc_fake_sorted = disc_fake.sort(dim=1)[0]
+        disc_real_sorted = disc_real.sort(dim=1, descending=True)[0]
+        disc_fake_sorted = disc_fake.sort(dim=1, descending=True)[0]
 
         loss = (disc_real_sorted
-                - disc_fake_sorted).pow(2).sum(dim=1).mean()
+                - disc_fake_sorted).pow(2).mean()
 
         return loss
 
