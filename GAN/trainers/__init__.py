@@ -162,9 +162,17 @@ class AbstractBaseTrainer(ABC):
                     if self._mlflow_enabled:
                         mlflow.log_artifact(img_path, 'images')
 
-                checkpoint_path = self._save_checkpoints(
-                    models_path, epochs, steps)
-                mlflow.log_artifact(checkpoint_path, 'models')
+                self._save_checkpoints(models_path, epochs, steps)
+
+                if self._mlflow_enabled:
+                    mlflow.pytorch.log_model(
+                        self.generator_network,
+                        f'models/generator_step_{steps}_epoch_{epochs}/')
+
+                    for i, disc in enumerate(self.discriminator_networks):
+                        mlflow.pytorch.log_model(
+                            disc, f'models/discriminator_{i}'
+                                  f'_step_{steps}_epoch_{epochs}/')
 
             steps += 1
 
