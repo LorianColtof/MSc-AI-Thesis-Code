@@ -53,7 +53,7 @@ class CelebaDataset(AbstractBaseDataset):
         plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, steps: int, epochs: int) -> None:
+                            images_path: str, steps: int, epochs: int) -> str:
         NC = 3
         IMGSIZE = 64
 
@@ -71,8 +71,9 @@ class CelebaDataset(AbstractBaseDataset):
         plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, bottom=0,
                             top=1)
 
-        plt.savefig(os.path.join(
-            images_path, 'epoch_{}_step_{}.png'.format(epochs, steps)), dpi=75)
+        img_path = os.path.join(
+            images_path, 'epoch_{}_step_{}.png'.format(epochs, steps))
+        plt.savefig(img_path, dpi=75)
         plt.close(fig)
 
-
+        return img_path

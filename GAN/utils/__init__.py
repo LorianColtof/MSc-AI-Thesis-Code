@@ -26,5 +26,3 @@ def gradient_penalty(discriminator, samples_real, samples_generated,
     penalty = (((gradients.norm(2, dim=1) - 1) ** 2).mean()
                * lambda_reg)
     return penalty
-
-

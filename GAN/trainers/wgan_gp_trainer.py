@@ -65,11 +65,15 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
         return load_step + 1, load_epoch
 
     def _save_checkpoints(self, checkpoints_path: str, epoch: int,
-                          step: int) -> None:
+                          step: int) -> str:
+        path = os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt')
+
         torch.save({
             'generator': self.generator_network.state_dict(),
             'discriminator': self.discriminator_networks[0].state_dict(),
-        }, os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt'))
+        }, path)
+
+        return path
 
     def _generate_data(self, batch_size: int, data_real: Tensor) -> Tensor:
         data_shape = data_real.shape[1:]

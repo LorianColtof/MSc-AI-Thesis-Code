@@ -62,6 +62,19 @@ config_schema = {
                 "maximum_epochs": {"type": "integer"},
                 "maximum_steps": {"type": "integer"},
                 "critic_steps": {"type": "integer"},
+                "batch_size_fake": {"type": "integer"},
+                "use_dual_critic_networks": {"type": "boolean"},
+                "use_checkpoints": {"type": "boolean"},
+                "use_double_dual_transform": {"type": "boolean"},
+                "mlflow": {
+                    "type": "object",
+                    "required": ["enabled", "experiment_name"],
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "experiment_name": {"type": "string"},
+                        "tracking_server_url": {"type": "string"}
+                    }
+                }
             }
 
         },
@@ -86,6 +99,13 @@ class GeneratorDiscriminator(NamedTuple):
     discriminator: TypeWithOptions
 
 
+class MLflow(NamedTuple):
+    enabled: bool = False
+    experiment_name: Optional[str] = None
+    tracking_server_url: Optional[str] = None
+    artifact_uri: Optional[str] = None
+
+
 class Train(NamedTuple):
     type: str
     output_directory: str
@@ -94,6 +114,7 @@ class Train(NamedTuple):
     save_interval: int
     maximum_epochs: int
     maximum_steps: int
+    mlflow: MLflow
     critic_steps: int = default_critic_steps
     batch_size_fake: Optional[int] = None
     use_dual_critic_networks: bool = False
@@ -103,6 +124,7 @@ class Train(NamedTuple):
 
 class RuntimeOptions(TypedDict):
     device: torch.device
+    config_filename: Optional[str]
 
 
 class Configuration(NamedTuple):
@@ -112,7 +134,7 @@ class Configuration(NamedTuple):
     loss: TypeWithOptions
     train: Train
     runtime_options: RuntimeOptions = RuntimeOptions(
-        device=torch.device('cpu'))
+        device=torch.device('cpu'), config_filename=None)
 
 
 def _create_generator_discriminator_info(
@@ -131,6 +153,12 @@ def load_configuration(config_file: IO) -> Configuration:
     models = _create_generator_discriminator_info(config['models'])
     optimizers = _create_generator_discriminator_info(config['optimizers'])
     loss = TypeWithOptions(**config['loss'])
+
+    if 'mlflow' in config['train']:
+        config['train']['mlflow'] = MLflow(**config['train']['mlflow'])
+    else:
+        config['train']['mlflow'] = MLflow(enabled=False)
+
     train = Train(**config['train'])
 
     return Configuration(dataset, models, optimizers, loss, train)

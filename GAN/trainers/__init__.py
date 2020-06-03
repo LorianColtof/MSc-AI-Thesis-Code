@@ -1,14 +1,17 @@
 import os
 from abc import ABC, abstractmethod
-from typing import Tuple, Iterator, Any, Type, List, Mapping, Dict
+from typing import Tuple, Iterator, Any, Type, List, Dict
 
 import torch
 from torch import Tensor
 from torch.nn import Module, Parameter
 from torch.optim.optimizer import Optimizer
+import mlflow
+import mlflow.pytorch
 
 import datasets
 from configuration import Configuration
+from utils.mlflow import enable_mlflow_tracking_class
 
 
 class AbstractBaseTrainer(ABC):
@@ -30,6 +33,11 @@ class AbstractBaseTrainer(ABC):
     def __init__(self, config: Configuration):
         self.config = config
 
+    @property
+    def _mlflow_enabled(self):
+        return self.config.train.mlflow.enabled
+
+    @enable_mlflow_tracking_class('config')
     def train(self):
         device = self.config.runtime_options['device']
         self.dataset = datasets.load_dataset(
@@ -94,8 +102,8 @@ class AbstractBaseTrainer(ABC):
             not self.use_same_batch_sizes \
             else self.config.train.batch_size
 
-        while epochs < self.config.train.maximum_epochs and \
-                steps < self.config.train.maximum_steps:
+        while epochs <= self.config.train.maximum_epochs and \
+                steps <= self.config.train.maximum_steps:
             print(f"Step {steps}")
 
             if self.optimize_discriminator:
@@ -114,8 +122,14 @@ class AbstractBaseTrainer(ABC):
                             step_batch_size_fake,
                             data_real)
 
+                        discriminator_loss = loss.item()
                         print(f'Discriminator {discriminator_index} loss: '
-                              f'{loss.item()}')
+                              f'{discriminator_loss}')
+
+                        if self._mlflow_enabled:
+                            mlflow.log_metric(
+                                f'discriminator_{discriminator_index}_loss',
+                                discriminator_loss)
 
                         self._optimize_discriminator(
                             loss, self.discriminator_optimizers[discriminator])
@@ -130,7 +144,11 @@ class AbstractBaseTrainer(ABC):
                                             step_batch_size_fake,
                                             data_real)
 
-            print(f'Generator loss: {loss.item()}')
+            generator_loss = loss.item()
+            if self._mlflow_enabled:
+                mlflow.log_metric('generator_loss', generator_loss)
+
+            print(f'Generator loss: {generator_loss}')
 
             self._optimize_generator(loss)
 
@@ -138,10 +156,15 @@ class AbstractBaseTrainer(ABC):
                 print("Saving images and models")
 
                 with torch.no_grad():
-                    self.dataset.save_generated_data(
+                    img_path = self.dataset.save_generated_data(
                         self.generator_network, images_path, steps, epochs)
 
-                self._save_checkpoints(models_path, epochs, steps)
+                    if self._mlflow_enabled:
+                        mlflow.log_artifact(img_path, 'images')
+
+                checkpoint_path = self._save_checkpoints(
+                    models_path, epochs, steps)
+                mlflow.log_artifact(checkpoint_path, 'models')
 
             steps += 1
 
@@ -169,7 +192,7 @@ class AbstractBaseTrainer(ABC):
 
     @abstractmethod
     def _save_checkpoints(self, checkpoints_path: str,
-                          epoch: int, step: int) -> None:
+                          epoch: int, step: int) -> str:
         pass
 
     @abstractmethod

@@ -175,7 +175,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         return load_step, load_epoch
 
-    def _load_checkpoints_single(self, checkpoints_path: str) \
+    def _load_checkpoints_old_single(self, checkpoints_path: str) \
             -> Tuple[int, int]:
         file_regex = re.compile(
             r'(discriminator|generator)_step_(\d+)_epoch_(\d+).pt')
@@ -229,6 +229,43 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         return load_step, load_epoch
 
+    def _load_checkpoints_single(self, checkpoints_path: str)\
+            -> Tuple[int, int]:
+        file_regex = re.compile(r'step_(\d+)_epoch_(\d+).pt')
+
+        files = os.listdir(checkpoints_path)
+        checkpoints = {}
+
+        for file in files:
+            match = file_regex.match(file)
+            if not match:
+                continue
+
+            step = int(match.group(1))
+            epoch = int(match.group(2))
+
+            checkpoints[step] = (file, epoch)
+
+        if not checkpoints:
+            return 0, 0
+
+        load_step = max(checkpoints.keys())
+
+        load_epoch = checkpoints[load_step][1]
+
+        checkpoint_path = os.path.join(checkpoints_path,
+                                       checkpoints[load_step][0])
+        checkpoint_dict = torch.load(checkpoint_path)
+
+        self.generator_network.load_state_dict(checkpoint_dict['generator'])
+        self.generator_network.train()
+
+        self.discriminator_networks[0].load_state_dict(
+            checkpoint_dict['discriminator'])
+        self.discriminator_networks[0].train()
+
+        return load_step, load_epoch
+
     def _load_checkpoints(self, checkpoints_path: str) \
             -> Tuple[int, int]:
         print("Loading checkpoints")
@@ -237,6 +274,11 @@ class OTLossTrainer(AbstractBaseTrainer):
             step, epoch = self._load_checkpoints_dual(checkpoints_path)
         else:
             step, epoch = self._load_checkpoints_single(checkpoints_path)
+
+            if step == 0:
+                print("Trying to load old-style checkpoints.")
+                step, epoch = self._load_checkpoints_old_single(
+                    checkpoints_path)
 
         if step == 0:
             print("No checkpoints available to load.")
@@ -247,30 +289,34 @@ class OTLossTrainer(AbstractBaseTrainer):
         return step + 1, epoch
 
     def _save_checkpoints_single(self, checkpoints_path: str, epoch: int,
-                                 step: int) -> None:
-        torch.save(self.generator_network.state_dict(),
-                   os.path.join(
-                       checkpoints_path,
-                       f'generator_step_{step}_epoch_{epoch}.pt'))
-        torch.save(self.discriminator_networks[0].state_dict(),
-                   os.path.join(
-                       checkpoints_path,
-                       f'discriminator_step_{step}_epoch_{epoch}.pt'))
+                                 step: int) -> str:
+        path = os.path.join(
+            checkpoints_path,
+            f'step_{step}_epoch_{epoch}.pt')
+        torch.save({
+                'generator': self.generator_network.state_dict(),
+                'discriminator': self.discriminator_networks[0].state_dict()
+        }, path)
+
+        return path
 
     def _save_checkpoints_double(self, checkpoints_path: str, epoch: int,
-                                 step: int) -> None:
+                                 step: int) -> str:
+        path = os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt')
         torch.save({
             'generator': self.generator_network.state_dict(),
             'discriminator0': self.discriminator_networks[0].state_dict(),
             'discriminator1': self.discriminator_networks[1].state_dict(),
-        }, os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt'))
+        }, path)
+
+        return path
 
     def _save_checkpoints(self, checkpoints_path: str, epoch: int,
-                          step: int) -> None:
+                          step: int) -> str:
         if self.config.train.use_dual_critic_networks:
-            self._save_checkpoints_double(checkpoints_path, epoch, step)
+            return self._save_checkpoints_double(checkpoints_path, epoch, step)
         else:
-            self._save_checkpoints_single(checkpoints_path, epoch, step)
+            return self._save_checkpoints_single(checkpoints_path, epoch, step)
 
     def _get_single_loss(self, data_fake: Tensor,
                          cost_matrix_cross: Tensor) -> Tensor:

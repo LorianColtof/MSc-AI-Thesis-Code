@@ -26,6 +26,8 @@ def main():
         print("CUDA is not available, falling back to CPU")
         config.runtime_options['device'] = torch.device('cpu')
 
+    config.runtime_options['config_filename'] = args.config_file.name
+
     torch.random.manual_seed(42)
 
     trainer: AbstractBaseTrainer
