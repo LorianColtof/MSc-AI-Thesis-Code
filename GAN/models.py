@@ -381,7 +381,7 @@ class MnistCNNGenerator(nn.Module):
 
             # 32 x 32 x 128
             nn.Conv2d(128, 1, kernel_size=5, stride=1, padding=0),
-            nn.Sigmoid()
+            nn.Tanh()
         )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
