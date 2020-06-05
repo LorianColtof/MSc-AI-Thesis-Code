@@ -9,7 +9,6 @@ class AbstractBaseDataset(ABC):
 
     @abstractmethod
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, steps: int, epochs: int) -> str:
+                            images_path: str, filename: str) -> str:
         pass
-
 

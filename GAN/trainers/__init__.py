@@ -155,9 +155,11 @@ class AbstractBaseTrainer(ABC):
             if steps % self.config.train.save_interval == 0 and steps > 0:
                 print("Saving images and models")
 
+                str_step_epoch = f'step_{steps:>06}_epoch_{epochs:>04}'
+
                 with torch.no_grad():
                     img_path = self.dataset.save_generated_data(
-                        self.generator_network, images_path, steps, epochs)
+                        self.generator_network, images_path, str_step_epoch)
 
                     if self._mlflow_enabled:
                         mlflow.log_artifact(img_path, 'images')
@@ -167,12 +169,12 @@ class AbstractBaseTrainer(ABC):
                 if self._mlflow_enabled:
                     mlflow.pytorch.log_model(
                         self.generator_network,
-                        f'models/generator_step_{steps}_epoch_{epochs}/')
+                        f'models/generator_{str_step_epoch}/')
 
                     for i, disc in enumerate(self.discriminator_networks):
                         mlflow.pytorch.log_model(
-                            disc, f'models/discriminator_{i}'
-                                  f'_step_{steps}_epoch_{epochs}/')
+                            disc,
+                            f'models/discriminator_{i}_{str_step_epoch}/')
 
             steps += 1
 
