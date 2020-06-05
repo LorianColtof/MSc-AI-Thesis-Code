@@ -1,7 +1,3 @@
-import os
-import re
-from typing import Tuple
-
 import torch
 from torch import Tensor
 
@@ -22,58 +18,6 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
             self.config.models.discriminator.type,
             input_dim=self.dataset.data_dimension,
             **self.config.models.discriminator.options))
-
-    def _load_checkpoints(self, checkpoints_path: str) -> Tuple[int, int]:
-        print("Loading checkpoints")
-
-        file_regex = re.compile(r'step_(\d+)_epoch_(\d+).pt')
-
-        files = os.listdir(checkpoints_path)
-        checkpoints = {}
-
-        for file in files:
-            match = file_regex.match(file)
-            if not match:
-                continue
-
-            step = int(match.group(1))
-            epoch = int(match.group(2))
-
-            checkpoints[step] = (file, epoch)
-
-        if not checkpoints:
-            print("No checkpoints available to load.")
-            return 0, 0
-
-        load_step = max(checkpoints.keys())
-
-        load_epoch = checkpoints[load_step][1]
-
-        checkpoint_path = os.path.join(checkpoints_path,
-                                       checkpoints[load_step][0])
-        checkpoint_dict = torch.load(checkpoint_path)
-
-        self.generator_network.load_state_dict(checkpoint_dict['generator'])
-        self.generator_network.train()
-
-        self.discriminator_networks[0].load_state_dict(
-            checkpoint_dict['discriminator'])
-        self.discriminator_networks[0].train()
-
-        print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
-
-        return load_step + 1, load_epoch
-
-    def _save_checkpoints(self, checkpoints_path: str, epoch: int,
-                          step: int) -> str:
-        path = os.path.join(checkpoints_path, f'step_{step}_epoch_{epoch}.pt')
-
-        torch.save({
-            'generator': self.generator_network.state_dict(),
-            'discriminator': self.discriminator_networks[0].state_dict(),
-        }, path)
-
-        return path
 
     def _generate_data(self, batch_size: int, data_real: Tensor) -> Tensor:
         data_shape = data_real.shape[1:]
