@@ -23,7 +23,7 @@ class AbstractBaseTrainer(ABC):
     discriminator_networks: List[Module] = []
 
     generator_optimizer: Optimizer
-    discriminator_optimizers: Dict[Module, Optimizer] = {}
+    discriminator_optimizers: Dict[int, Optimizer] = {}
 
     use_same_batch_sizes: bool = False
 
@@ -60,9 +60,9 @@ class AbstractBaseTrainer(ABC):
             self.generator_network.parameters(),
             **self.config.optimizers.generator.options)
 
-        for discriminator in self.discriminator_networks:
+        for i, discriminator in enumerate(self.discriminator_networks):
             if list(discriminator.parameters()):
-                self.discriminator_optimizers[discriminator] = \
+                self.discriminator_optimizers[i] = \
                     self._load_optimizer(
                         self.config.optimizers.discriminator.type,
                         discriminator.parameters(),
@@ -81,7 +81,10 @@ class AbstractBaseTrainer(ABC):
         os.makedirs(models_path, exist_ok=True)
 
         if self.config.train.use_checkpoints:
-            steps, epochs = self._load_checkpoints(models_path)
+            if self._mlflow_enabled:
+                steps, epochs = self._load_mlflow_checkpoints()
+            else:
+                steps, epochs = self._load_checkpoints(models_path)
         else:
             steps = 0
             epochs = 0
@@ -133,7 +136,8 @@ class AbstractBaseTrainer(ABC):
                                 discriminator_loss)
 
                         self._optimize_discriminator(
-                            loss, self.discriminator_optimizers[discriminator])
+                            loss,
+                            self.discriminator_optimizers[discriminator_index])
 
             data_real: torch.Tensor = next(self.data_it)[0].to(device)
             batch_size = data_real.shape[0]
@@ -247,6 +251,49 @@ class AbstractBaseTrainer(ABC):
         }, path)
 
         return path
+
+    def _load_mlflow_checkpoints(self) -> Tuple[int, int]:
+        print("Loading checkpoints")
+
+        artifact_generator_regex = re.compile(
+            r'models/generator_step_(\d+)_epoch_(\d+)')
+        checkpoints = {}
+
+        run = mlflow.active_run()
+        client = mlflow.tracking.MlflowClient()
+        artifacts = client.list_artifacts(run.info.run_id, 'models')
+
+        for artifact in artifacts:
+            match = artifact_generator_regex.match(artifact.path)
+            if not match:
+                continue
+
+            step = int(match.group(1))
+            epoch = int(match.group(2))
+
+            checkpoints[step] = (artifact, epoch)
+
+        if not checkpoints:
+            print("No checkpoints available to load.")
+            return 0, 0
+
+        load_step = max(checkpoints.keys())
+
+        load_artifact, load_epoch = checkpoints[load_step]
+
+        self.generator_network = mlflow.pytorch.load_model(
+            f'{run.info.artifact_uri}/{load_artifact.path}')
+
+        str_step_epoch = f'step_{load_step:>06}_epoch_{load_epoch:>04}'
+
+        for i in range(len(self.discriminator_networks)):
+            path = f'{run.info.artifact_uri}' \
+                   f'/models/discriminator_{i}_{str_step_epoch}'
+            self.discriminator_networks[i] = mlflow.pytorch.load_model(path)
+
+        print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
+
+        return load_step + 1, load_epoch
 
     @abstractmethod
     def _get_discriminator_loss(self,

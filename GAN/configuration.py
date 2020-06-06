@@ -125,6 +125,7 @@ class Train(NamedTuple):
 class RuntimeOptions(TypedDict):
     device: torch.device
     config_filename: Optional[str]
+    config_dict: dict
 
 
 class Configuration(NamedTuple):
@@ -161,4 +162,7 @@ def load_configuration(config_file: IO) -> Configuration:
 
     train = Train(**config['train'])
 
-    return Configuration(dataset, models, optimizers, loss, train)
+    config_result = Configuration(dataset, models, optimizers, loss, train)
+    config_result.runtime_options['config_dict'] = config
+
+    return config_result
