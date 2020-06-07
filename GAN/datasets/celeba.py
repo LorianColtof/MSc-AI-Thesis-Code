@@ -3,7 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from PIL.Image import Image
+from PIL import Image
 from torchvision import datasets
 from torchvision.transforms import transforms
 
