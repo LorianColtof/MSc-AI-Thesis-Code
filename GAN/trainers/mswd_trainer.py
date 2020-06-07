@@ -81,7 +81,8 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
         dataset_directions = datasets.load_dataset(
             config.dataset, device=config.runtime_options['device'],
             batch_size=config.loss.options['direction_sample_batch_size'],
-            latent_dimension=config.train.latent_dimension)
+            latent_dimension=config.train.latent_dimension,
+            drop_last=True)
 
         def data_iterator() -> Iterator[torch.Tensor]:
             while True:

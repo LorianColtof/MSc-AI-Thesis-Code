@@ -15,7 +15,8 @@ class CelebaDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
 
     def __init__(self, dataset_config: Dataset, device: torch.device,
-                 batch_size: int, latent_dimension: int):
+                 batch_size: int, latent_dimension: int,
+                 drop_last: bool = False):
         crop_size = 108
         re_size = 64
         offset_height = (218 - crop_size) // 2
@@ -40,8 +41,8 @@ class CelebaDataset(AbstractBaseDataset):
         imagenet_data = datasets.ImageFolder(dataset_config.directory,
                                              transform=transform)
         self.dataloader = torch.utils.data.DataLoader(
-            imagenet_data, batch_size=batch_size,
-            shuffle=True, num_workers=4)
+            imagenet_data, batch_size=batch_size, shuffle=True,
+            pin_memory=True, drop_last=drop_last, num_workers=4)
 
         # Fix latent samples for visualization purposes
         self._source_samples_plot = torch.randn(
