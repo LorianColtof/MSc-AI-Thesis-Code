@@ -1,4 +1,8 @@
-from typing import IO, Dict, Any, NamedTuple, TypedDict, Optional
+import sys
+from typing import IO, Dict, Any, NamedTuple, Optional
+
+if sys.version_info >= (3, 8):
+    from typing import TypedDict
 
 import jsonschema
 import torch
@@ -121,10 +125,13 @@ class Train(NamedTuple):
     use_double_dual_transform: bool = True
 
 
-class RuntimeOptions(TypedDict):
-    device: torch.device
-    config_filename: Optional[str]
-    config_dict: dict
+if sys.version_info >= (3, 8):
+    class RuntimeOptions(TypedDict):
+        device: torch.device
+        config_filename: Optional[str]
+        config_dict: dict
+else:
+    RuntimeOptions = dict
 
 
 class Configuration(NamedTuple):
