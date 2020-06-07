@@ -93,24 +93,40 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
         self.num_projections = self.config.loss.options[
             'direction_sample_batch_size']
 
-    def _sample_directions(self, device):
+        if not self.config.loss.options['sample_source'] in {'random', 'data'}:
+            raise Exception("sample_source should be one of: random, data")
+        self.sample_random = (self.config.loss.options['sample_source']
+                              == 'random')
+
+    def _normalize_directions(self, directions: torch.Tensor) -> torch.Tensor:
+        features_norm = directions.norm(dim=1, p=2).unsqueeze(1)
+
+        # Remove feature vectors with a very small norm to
+        # (hopefully) prevent numerical issues.
+        features_mask = features_norm > 1e-11
+        features_sample = directions[features_mask.squeeze(), :]
+        features_norm = features_norm[features_mask].unsqueeze(1)
+
+        directions_sample = features_sample / features_norm
+
+        return directions_sample
+
+    def _sample_directions_data(self, device: torch.device) -> torch.Tensor:
         with torch.no_grad():
             data_sample = next(self.data_iterator_directions)[0].to(device)
             
             features_sample = self.discriminator_networks[0](
                 data_sample).reshape(self.num_projections, -1)
 
-            features_norm = features_sample.norm(dim=1, p=2).unsqueeze(1)
+            return self._normalize_directions(features_sample)
 
-            # Remove feature vectors with a very small norm to
-            # (hopefully) prevent numerical issues.
-            features_mask = features_norm > 1e-11
-            features_sample = features_sample[features_mask.squeeze(), :]
-            features_norm = features_norm[features_mask].unsqueeze(1)
+    def _sample_directions_random(self, dim: int, device: torch.device) \
+            -> torch.Tensor:
+        with torch.no_grad():
+            features_sample = torch.randn((self.num_projections, dim),
+                                          device=device)
 
-            directions_sample = features_sample / features_norm
-
-            return directions_sample
+            return self._normalize_directions(features_sample)
 
     def _get_discriminator_loss(self,
                                 discriminator_index: int,
@@ -125,7 +141,11 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
         features_fake = self.discriminator_networks[0](data_fake).reshape(
             batch_size_fake, -1)
 
-        directions_sample = self._sample_directions(data_real.device)
+        if self.sample_random:
+            directions_sample = self._sample_directions_random(
+                features_real.shape[1], data_real.device)
+        else:
+            directions_sample = self._sample_directions_data(data_real.device)
 
         disc_real = directions_sample @ features_real.T
         disc_fake = directions_sample @ features_fake.T
@@ -144,20 +164,11 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
         features_fake = self.discriminator_networks[0](data_fake).reshape(
             batch_size_fake, -1)
 
-        # features_sample = torch.randn(
-        #     (self.num_projections, features_real.shape[1]),
-        #     device=data_real.device)
-        # features_norm = features_sample.norm(dim=1, p=2).unsqueeze(1)
-        #
-        # # Remove feature vectors with a very small norm to
-        # # (hopefully) prevent numerical issues.
-        # features_mask = features_norm > 1e-11
-        # features_sample = features_sample[features_mask.squeeze(), :]
-        # features_norm = features_norm[features_mask].unsqueeze(1)
-        #
-        # directions_sample = features_sample / features_norm
-
-        directions_sample = self._sample_directions(data_real.device)
+        if self.sample_random:
+            directions_sample = self._sample_directions_random(
+                features_real.shape[1], data_real.device)
+        else:
+            directions_sample = self._sample_directions_data(data_real.device)
 
         disc_real = directions_sample @ features_real.T
         disc_fake = directions_sample @ features_fake.T
