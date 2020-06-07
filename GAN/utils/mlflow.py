@@ -53,7 +53,8 @@ def enable_mlflow_tracking(config: Configuration) \
                 for key in ['maximum_epochs', 'maximum_steps',
                             'use_checkpoints', 'output_directory',
                             'save_interval', 'mlflow']:
-                    del config_dict['train'][key]
+                    if key in config_dict['train']:
+                        del config_dict['train'][key]
 
                 del config_dict['dataset']['directory']
 

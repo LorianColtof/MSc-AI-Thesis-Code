@@ -1,7 +1,8 @@
 import os
 import re
+import tempfile
 from abc import ABC, abstractmethod
-from typing import Tuple, Iterator, Any, Type, List, Dict
+from typing import Tuple, Iterator, Any, Type, List, Dict, Optional
 
 import torch
 from torch import Tensor
@@ -71,23 +72,27 @@ class AbstractBaseTrainer(ABC):
         if not self.discriminator_optimizers:
             self.optimize_discriminator = False
 
-        images_path = os.path.join(self.config.train.output_directory,
-                                   'images')
-        models_path = os.path.join(self.config.train.output_directory,
-                                   'models')
+        models_path: Optional[str] = None
+        if self.config.train.output_directory:
+            images_path = os.path.join(self.config.train.output_directory,
+                                       'images')
+            models_path = os.path.join(self.config.train.output_directory,
+                                       'models')
 
-        os.makedirs(self.config.train.output_directory, exist_ok=True)
-        os.makedirs(images_path, exist_ok=True)
-        os.makedirs(models_path, exist_ok=True)
+            os.makedirs(self.config.train.output_directory, exist_ok=True)
+            os.makedirs(images_path, exist_ok=True)
+            os.makedirs(models_path, exist_ok=True)
+        else:
+            tempdir = tempfile.TemporaryDirectory(prefix='gan-trainer')
+            images_path = tempdir.name
 
+        steps = 0
+        epochs = 0
         if self.config.train.use_checkpoints:
             if self._mlflow_enabled:
                 steps, epochs = self._load_mlflow_checkpoints()
-            else:
+            elif models_path:
                 steps, epochs = self._load_checkpoints(models_path)
-        else:
-            steps = 0
-            epochs = 0
 
         def data_iterator() -> Iterator[torch.Tensor]:
             nonlocal epochs
@@ -169,7 +174,8 @@ class AbstractBaseTrainer(ABC):
                     if self._mlflow_enabled:
                         mlflow.log_artifact(img_path, 'images')
 
-                self._save_checkpoints(models_path, epochs, steps)
+                if models_path:
+                    self._save_checkpoints(models_path, epochs, steps)
 
                 if self._mlflow_enabled:
                     mlflow.pytorch.log_model(

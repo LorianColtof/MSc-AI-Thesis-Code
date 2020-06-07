@@ -50,8 +50,7 @@ config_schema = {
         "loss": type_with_options_schema,
         "train": {
             "type": "object",
-            "required": ["output_directory", "save_interval",
-                         "maximum_epochs", "maximum_steps"],
+            "required": ["save_interval", "maximum_epochs", "maximum_steps"],
             "default": {
                 "critic_steps": default_critic_steps
             },
@@ -108,13 +107,13 @@ class MLflow(NamedTuple):
 
 class Train(NamedTuple):
     type: str
-    output_directory: str
     batch_size: int
     latent_dimension: int
     save_interval: int
     maximum_epochs: int
     maximum_steps: int
     mlflow: MLflow
+    output_directory: Optional[str] = None
     critic_steps: int = default_critic_steps
     batch_size_fake: Optional[int] = None
     use_dual_critic_networks: bool = False
