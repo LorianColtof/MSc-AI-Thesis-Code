@@ -7,7 +7,7 @@ import time
 
 from ot.smooth import smooth_ot_dual
 
-from sinkhorn.regular import sinkhorn
+from sinkhorn.regular import sinkhorn, sinkhorn3
 from sinkhorn.quadratic import sinkhorn_quadratic_cyclic_projection,\
     sinkhorn_quadratic_gradient_descent,\
     sinkhorn_quadratic_fixed_point_iteration,\
@@ -105,8 +105,8 @@ def example_gaussians(device: torch.device):
     C = (X - Y) ** 2
     # C = euc_costs(n, n, device, dtype=t.dtype)
 
-    # epsilon = 9e-4
-    epsilon = 1e-2
+    epsilon = 9e-4
+    # epsilon = 1e-2
     # epsilon = 1e-1
 
     def reg_entropy_convex_conjugate(x):
@@ -126,7 +126,7 @@ def example_gaussians(device: torch.device):
     log = True
     gamma = 1.0 / epsilon
 
-    P_regular = sinkhorn(C, a, b, epsilon)
+    P_regular = sinkhorn(C, a, b, epsilon, log=log)
     P_unbalanced = sinkhorn_unbalanced(C, a, b, epsilon, 1, log=log)
 
     plt.imshow(torch.log(P_regular + 1e-5).cpu())
@@ -137,40 +137,103 @@ def example_gaussians(device: torch.device):
     plt.title('Unbalanced Sinkhorn')
     plt.show()
 
-    P_cp = sinkhorn_quadratic_cyclic_projection(C, a, b, gamma, log=log)
-    print("Cyclic projection done")
+    # P_cp = sinkhorn_quadratic_cyclic_projection(C, a, b, gamma, log=log)
+    # print("Cyclic projection done")
+    #
+    # P_gd = sinkhorn_quadratic_gradient_descent(C, a, b, gamma, log=log)
+    # print("Gradient descent done")
+    #
+    # P_fpi = sinkhorn_quadratic_fixed_point_iteration(C, a, b, gamma, log=log)
+    # print("Fixed point iteration done")
+    #
+    # P_ngd = sinkhorn_quadratic_nesterov_gradient_descent(C, a, b, gamma,
+    #                                                      log=log)
+    # print("Nesterov gradient descent done")
+    #
+    # P_reference = torch.from_numpy(smooth_ot_dual(
+    #     a.cpu().numpy(), b.cpu().numpy(), C.cpu().numpy(), gamma))
+    #
+    # elapsed = time.time() - start
+    #
+    # print(f"Elapsed time: {elapsed} seconds")
+    #
+    # for P, title in [(P_cp, "Cyclic projection"),
+    #                  (P_gd, "Gradient descent"),
+    #                  (P_fpi, "Fixed point iteration"),
+    #                  (P_ngd, "Nesterov gradient descent"),
+    #                  (P_reference, "POT reference")]:
+    #     plt.imshow(torch.log(P + 1e-5).cpu())
+    #     plt.title(title)
+    #     plt.show()
+    #
 
-    P_gd = sinkhorn_quadratic_gradient_descent(C, a, b, gamma, log=log)
-    print("Gradient descent done")
+def example_gaussians_3_marginals(device: torch.device):
+    sigma = .06
 
-    P_fpi = sinkhorn_quadratic_fixed_point_iteration(C, a, b, gamma, log=log)
-    print("Fixed point iteration done")
+    n = 200
+    t = torch.linspace(0, 1, n, device=device, dtype=torch.float64)
+    Gaussian = lambda t0, sigma: torch.exp(-(t - t0) ** 2 / (2 * sigma ** 2))
+    normalize = lambda p: p / p.sum()
 
-    P_ngd = sinkhorn_quadratic_nesterov_gradient_descent(C, a, b, gamma,
-                                                         log=log)
-    print("Nesterov gradient descent done")
+    a = Gaussian(.25, sigma)
+    b = Gaussian(.8, sigma)
+    c = Gaussian(.5, sigma)
 
-    P_reference = torch.from_numpy(smooth_ot_dual(
-        a.cpu().numpy(), b.cpu().numpy(), C.cpu().numpy(), gamma))
+    vmin = .02
+    a = normalize(a + a.max() * vmin)
+    b = normalize(b + b.max() * vmin)
+    c = normalize(c + c.max() * vmin)
 
-    elapsed = time.time() - start
+    plt.figure(figsize=(10, 7))
 
-    print(f"Elapsed time: {elapsed} seconds")
+    plt.subplot(3, 1, 1)
+    plt.bar(t.cpu(), a.cpu(), width=1 / len(t), color="darkblue")
+    plt.xlabel('A')
+    plt.subplot(3, 1, 2)
+    plt.bar(t.cpu(), b.cpu(), width=1 / len(t), color="darkblue")
+    plt.xlabel('B')
+    plt.subplot(3, 1, 3)
+    plt.bar(t.cpu(), c.cpu(), width=1 / len(t), color="darkblue")
+    plt.xlabel('C')
 
-    for P, title in [(P_cp, "Cyclic projection"),
-                     (P_gd, "Gradient descent"),
-                     (P_fpi, "Fixed point iteration"),
-                     (P_ngd, "Nesterov gradient descent"),
-                     (P_reference, "POT reference")]:
-        plt.imshow(torch.log(P + 1e-5).cpu())
-        plt.title(title)
+    plt.show()
+
+    # Some of the algorithms are sensitive to which one we use
+    X, Y, Z = torch.meshgrid([t, t, t])
+    C = ((X - Y) ** 2 + (X - Z) ** 2 + (Y - Z) ** 2) / 3
+
+    epsilon = 9e-4
+    # epsilon = 1e-2
+    # epsilon = 1e-1
+
+    log = True
+
+    P_regular = sinkhorn3(C, a, b, c, epsilon, log=log)
+
+    ticks = [tens.item() for tens in torch.linspace(0, n, 11)]
+    ticks_labels = [f'{tens.item():.1f}' for tens in torch.linspace(0, 1, 11)]
+
+    for projection_dimension, mapping_rows, mapping_cols in [
+            (2, 'A', 'B'),
+            (1, 'A', 'C'),
+            (0, 'B', 'C')]:
+        P_proj = P_regular.sum(dim=projection_dimension)
+        plt.imshow(torch.log(P_proj + 1e-5).cpu())
+
+        plt.xticks(ticks, ticks_labels)
+        plt.yticks(ticks, ticks_labels)
+
+        plt.xlabel(mapping_cols)
+        plt.ylabel(mapping_rows)
+        plt.title(f'Projected mapping between '
+                  f'{mapping_rows} and {mapping_cols}')
         plt.show()
 
 
 def main():
     torch.random.manual_seed(42)
 
-    use_cpu = True
+    use_cpu = False
 
     if torch.cuda.is_available() and not use_cpu:
         print("Using CUDA")
@@ -180,7 +243,8 @@ def main():
         device = torch.device('cpu')
 
     # example_point_clouds(device)
-    example_gaussians(device)
+    # example_gaussians(device)
+    example_gaussians_3_marginals(device)
 
 if __name__ == "__main__":
     main()
