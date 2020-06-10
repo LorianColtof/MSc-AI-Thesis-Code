@@ -155,3 +155,60 @@ def sinkhorn_quadratic_nesterov_gradient_descent(
 
     return (f.expand_as(C.T).T + g.expand_as(C) - C).clamp(min=0) / epsilon
 
+
+def sinkhorn_quadratic_nesterov_gradient_descent3(
+        cost: torch.Tensor, marg1: torch.Tensor, marg2: torch.Tensor,
+        marg3: torch.Tensor, epsilon: float, num_iter: int = 50000,
+        convergence_error: float = 1e-8, log=False) -> torch.Tensor:
+    n1 = marg1.size()[0]
+    n2 = marg2.size()[0]
+    n3 = marg3.size()[0]
+
+    p1 = torch.zeros_like(marg1)
+    p2 = torch.zeros_like(marg2)
+    p3 = torch.zeros_like(marg3)
+
+    step = 1.0 / (n1 + n2 + n3)
+
+    p1_prev = p1
+    p2_prev = p2
+    p3_prev = p3
+
+    for it in range(num_iter):
+        p1_p = p1 + n1 * (p1 - p1_prev) / (n1 + 3)
+        p2_p = p2 + n2 * (p2 - p2_prev) / (n2 + 3)
+        p3_p = p3 + n3 * (p3 - p3_prev) / (n3 + 3)
+
+        P = (p1.expand_as(cost.T).T
+             + p2.expand_as(cost.permute(0, 2, 1)).permute(0, 2, 1)
+             + p3.expand_as(cost) - cost).clamp(min=0) / epsilon
+
+        p1_new = p1_p - step * epsilon * (P.sum((1, 2)) - marg1)
+        p2_new = p2_p - step * epsilon * (P.sum((0, 2)) - marg2)
+        p3_new = p3_p - step * epsilon * (P.sum((0, 1)) - marg3)
+
+        p1_diff = (p1_prev - p1_new).abs().sum()
+        p2_diff = (p2_prev - p2_new).abs().sum()
+        p3_diff = (p3_prev - p3_new).abs().sum()
+
+        p1_prev = p1
+        p2_prev = p2
+        p3_prev = p3
+
+        p1 = p1_new
+        p2 = p2_new
+        p3 = p3_new
+
+        if log:
+            print(f"Iteration {it}")
+            print(f"p1_diff {p1_diff}")
+            print(f"p2_diff {p2_diff}")
+            print(f"p3_diff {p3_diff}")
+
+        if p1_diff < convergence_error and p2_diff < convergence_error \
+                and p2_diff < convergence_error:
+            break
+
+    return (p1.expand_as(cost.T).T
+            + p2.expand_as(cost.permute(0, 2, 1)).permute(0, 2, 1)
+            + p3.expand_as(cost) - cost).clamp(min=0) / epsilon
