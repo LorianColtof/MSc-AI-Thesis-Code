@@ -138,7 +138,7 @@ class AbstractBaseTrainer(ABC):
                         if self._mlflow_enabled:
                             mlflow.log_metric(
                                 f'discriminator_{discriminator_index}_loss',
-                                discriminator_loss)
+                                discriminator_loss, steps)
 
                         self._optimize_discriminator(
                             loss,
@@ -156,7 +156,7 @@ class AbstractBaseTrainer(ABC):
 
             generator_loss = loss.item()
             if self._mlflow_enabled:
-                mlflow.log_metric('generator_loss', generator_loss)
+                mlflow.log_metric('generator_loss', generator_loss, steps)
 
             print(f'Generator loss: {generator_loss}')
 
