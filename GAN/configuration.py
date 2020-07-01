@@ -75,6 +75,7 @@ config_schema = {
                     "properties": {
                         "enabled": {"type": "boolean"},
                         "experiment_name": {"type": "string"},
+                        "run_name": {"type": "string"},
                         "tracking_server_url": {"type": "string"}
                     }
                 }
@@ -105,6 +106,7 @@ class GeneratorDiscriminator(NamedTuple):
 class MLflow(NamedTuple):
     enabled: bool = False
     experiment_name: Optional[str] = None
+    run_name: Optional[str] = None
     tracking_server_url: Optional[str] = None
     artifact_uri: Optional[str] = None
 

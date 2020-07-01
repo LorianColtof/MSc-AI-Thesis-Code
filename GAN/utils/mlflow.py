@@ -83,7 +83,8 @@ def enable_mlflow_tracking(config: Configuration) \
                     else:
                         print(f'Run {run_id} does not match.')
 
-                with mlflow.start_run(run_id=matching_run_id):
+                with mlflow.start_run(run_id=matching_run_id,
+                                      run_name=config.train.mlflow.run_name):
                     if not matching_run_id:
                         mlflow.set_tag('config_checksum', config_checksum)
                         _log_configuration(config)
