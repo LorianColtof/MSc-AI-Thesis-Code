@@ -392,6 +392,61 @@ class MnistCNNGenerator(nn.Module):
         return output
 
 
+class MnistCNNEnhancedGenerator(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int,
+                 res_block_repeat: int = 3):
+        super().__init__()
+
+        self.initial_fc = nn.Sequential(
+            nn.Linear(latent_dim, 4 * 4 * 1024),
+            nn.BatchNorm1d(4 * 4 * 1024),
+            nn.ReLU()
+        )
+
+        self.res_blocks = nn.Sequential(*[
+            Conv2dResidualBlock(dim_in=1024, dim_out=1024)
+            for _ in range(res_block_repeat)
+        ])
+
+        self.convolutions = nn.Sequential(
+            # 4 x 4 x 1024
+            nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(512, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 8 x 8 x 512
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(256, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 16 x 16 x 256
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 32 x 32 x 128
+            nn.Conv2d(128, 128, kernel_size=5, stride=1, padding=2,
+                      bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 32 x 32 x 128
+            nn.Conv2d(128, 1, kernel_size=5, stride=1, padding=0, bias=False),
+            nn.Tanh()
+        )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = self.initial_fc(input)
+        output = output.reshape(-1, 1024, 4, 4)
+        output = self.res_blocks(output)
+        output = self.convolutions(output)
+
+        return output
+
+
 class MnistDiscriminator(nn.Module):
     def __init__(self, input_dim, final_linear_bias=True):
         super().__init__()
@@ -491,6 +546,72 @@ class MnistCNNDiscriminator(nn.Module):
                 self.final_linear.weight.data, p=2, dim=1)
 
 
+class MnistCNNEnhancedDiscriminator(nn.Module):
+    def __init__(self, input_dim, include_final_linear=True,
+                 final_linear_bias=True):
+        super().__init__()
+
+        self.model = nn.Sequential(
+            # 28 x 28 x 1
+            nn.Conv2d(1, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.01),
+
+            # 28 x 28 x 32
+            nn.MaxPool2d(3, 2, 1),
+
+            # 14 x 14 x 32
+            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 14 x 14 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 7 x 7 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 7 x 7 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 4 x 4 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 4 x 4 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 2 x 2 x 64
+        )
+
+        self.include_final_linear = include_final_linear
+
+        if include_final_linear:
+            self.final_linear = nn.Linear(256, 1, bias=final_linear_bias)
+
+        self.normalize_final_linear()
+
+    def forward(self, img):
+        out = self.model(img)
+
+        if self.include_final_linear:
+            return self.final_linear(out.reshape(-1, 256))
+        else:
+            return out.reshape(-1, 256)
+
+    def normalize_final_linear(self):
+        if self.include_final_linear:
+            self.final_linear.weight.data = F.normalize(
+                self.final_linear.weight.data, p=2, dim=1)
+
+
 class IdentityDiscriminator(nn.Module):
     def __init__(self, input_dim, include_final_linear=True,
                  final_linear_bias=True):
@@ -516,6 +637,27 @@ class IdentityDiscriminator(nn.Module):
         if self.include_final_linear:
             self.final_linear.weight.data = F.normalize(
                 self.final_linear.weight.data, p=2, dim=1)
+
+
+class Conv2dResidualBlock(nn.Module):
+    """
+    Residual Block with instance normalization.
+    """
+    def __init__(self, dim_in, dim_out):
+        super().__init__()
+
+        self.main = nn.Sequential(
+            nn.Conv2d(dim_in, dim_out, kernel_size=3, stride=1,
+                      padding=1, bias=False),
+            nn.InstanceNorm2d(dim_out, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(dim_out, dim_out, kernel_size=3, stride=1,
+                      padding=1, bias=False),
+            nn.InstanceNorm2d(dim_out, affine=True,
+                              track_running_stats=True))
+
+    def forward(self, x):
+        return x + self.main(x)
 
 
 def load_model(model_type: str, **kwargs: Any) -> nn.Module:
