@@ -106,6 +106,9 @@ def _log_configuration(config: Configuration) -> None:
 
 def _log_configuration_params(config_item: Union[NamedTuple, dict],
                               prefix: Optional[str] = '') -> None:
+    if prefix == 'runtime_options.config_dict.':
+        return
+
     if isinstance(config_item, tuple):
         config_item = config_item._asdict()
 
