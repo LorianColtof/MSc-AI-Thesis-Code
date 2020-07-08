@@ -660,6 +660,69 @@ class Conv2dResidualBlock(nn.Module):
         return x + self.main(x)
 
 
+class EnhancedCelebaGenerator(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int,
+                 res_block_repeat: int = 3):
+        super().__init__()
+
+        self.initial_fc = nn.Sequential(
+            nn.Linear(latent_dim, 4 * 4 * 1024),
+            nn.BatchNorm1d(4 * 4 * 1024),
+            nn.ReLU()
+        )
+
+        self.res_blocks = nn.Sequential(*[
+            Conv2dResidualBlock(dim_in=1024, dim_out=1024)
+            for _ in range(res_block_repeat)
+        ])
+
+        self.convolutions = nn.Sequential(
+            # 4 x 4 x 1024
+            nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(512, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 8 x 8 x 512
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(256, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 16 x 16 x 256
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 32 x 32 x 128
+            nn.ConvTranspose2d(128, 128, kernel_size=4, stride=2, padding=1,
+                               bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 64 x 64 x 128
+            nn.Conv2d(128, 128, kernel_size=5, stride=1, padding=2,
+                      bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 64 x 64 x 128
+            nn.Conv2d(128, 3, kernel_size=5, stride=1, padding=2, bias=False),
+
+            # 64 x 64 x 3
+            nn.Tanh()
+        )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = self.initial_fc(input)
+        output = output.reshape(-1, 1024, 4, 4)
+        output = self.res_blocks(output)
+        output = self.convolutions(output)
+
+        return output
+
+
 def load_model(model_type: str, **kwargs: Any) -> nn.Module:
     try:
         model = globals()[model_type]
