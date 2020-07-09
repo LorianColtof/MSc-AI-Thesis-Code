@@ -10,6 +10,14 @@ from trainers.ot_trainer import OTLossTrainer
 from trainers.wgan_gp_trainer import WassersteinGPLossTrainer
 
 
+def debugger_active() -> bool:
+    try:
+        import pydevd
+        return True
+    except ImportError:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-file', '-f', type=argparse.FileType('r'),
@@ -25,6 +33,12 @@ def main():
     else:
         print("CUDA is not available, falling back to CPU")
         config.runtime_options['device'] = torch.device('cpu')
+
+    if debugger_active():
+        print("Debugger is active, using num_workers=0 for DataLoaders")
+        config.runtime_options['dataloader_num_workers'] = 0
+    else:
+        config.runtime_options['dataloader_num_workers'] = 4
 
     config.runtime_options['config_filename'] = args.config_file.name
 

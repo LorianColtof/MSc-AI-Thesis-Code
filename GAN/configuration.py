@@ -132,6 +132,7 @@ if sys.version_info >= (3, 8):
         device: torch.device
         config_filename: Optional[str]
         config_dict: dict
+        dataloader_num_workers: int
 else:
     RuntimeOptions = dict
 

@@ -1,6 +1,6 @@
 from typing import Any
 
-from configuration import Configuration, Dataset
+from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 from datasets.celeba import CelebaDataset
 from datasets.mnist import MnistDataset

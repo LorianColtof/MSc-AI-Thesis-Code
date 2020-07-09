@@ -80,6 +80,7 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
 
         dataset_directions = datasets.load_dataset(
             config.dataset, device=config.runtime_options['device'],
+            num_workers=config.runtime_options['dataloader_num_workers'],
             batch_size=config.loss.options['direction_sample_batch_size'],
             latent_dimension=config.train.latent_dimension,
             drop_last=True)

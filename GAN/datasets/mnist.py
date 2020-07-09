@@ -15,8 +15,9 @@ class MnistDataset(AbstractBaseDataset):
 
     _sample_image_size = 10
 
-    def __init__(self, dataset_config: Dataset, device: torch.device,
-                 batch_size: int, latent_dimension: int,
+    def __init__(self, dataset_config: Dataset, num_workers: int,
+                 device: torch.device, batch_size: int,
+                 latent_dimension: int,
                  drop_last: bool = False):
         self.data_dimension = 28 * 28
 
@@ -27,7 +28,7 @@ class MnistDataset(AbstractBaseDataset):
                       transforms.ToTensor(),
                       transforms.Normalize((0.5,), (0.5,))])),
             batch_size=batch_size, shuffle=True,
-            drop_last=drop_last, pin_memory=True)
+            drop_last=drop_last, pin_memory=True, num_workers=num_workers)
 
         self._source_samples_plot = torch.randn(
             (self._sample_image_size ** 2, latent_dimension), device=device)

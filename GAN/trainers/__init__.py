@@ -44,6 +44,7 @@ class AbstractBaseTrainer(ABC):
         device = self.config.runtime_options['device']
         self.dataset = datasets.load_dataset(
             self.config.dataset, device=device,
+            num_workers=self.config.runtime_options['dataloader_num_workers'],
             batch_size=self.config.train.batch_size,
             latent_dimension=self.config.train.latent_dimension)
 
