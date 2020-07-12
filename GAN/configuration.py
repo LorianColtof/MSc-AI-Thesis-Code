@@ -33,6 +33,7 @@ config_schema = {
             "properties": {
                 "type": {"type": "string"},
                 "directory": {"type": "string"},
+                "source_class": {"type": "string"}
             }
         },
         "models": {
@@ -40,7 +41,8 @@ config_schema = {
             "required": ["generator", "discriminator"],
             "properties": {
                 "generator": type_with_options_schema,
-                "discriminator": type_with_options_schema
+                "discriminator": type_with_options_schema,
+                "source_encoder": type_with_options_schema
             }
         },
         "optimizers": {
@@ -48,7 +50,8 @@ config_schema = {
             "required": ["generator", "discriminator"],
             "properties": {
                 "generator": type_with_options_schema,
-                "discriminator": type_with_options_schema
+                "discriminator": type_with_options_schema,
+                "source_encoder": type_with_options_schema
             }
         },
         "loss": type_with_options_schema,
@@ -91,6 +94,7 @@ config_validator = jsonschema.Draft7Validator(config_schema)
 class Dataset(NamedTuple):
     type: str
     directory: str
+    source_class: Optional[str] = None
 
 
 class TypeWithOptions(NamedTuple):
@@ -98,9 +102,10 @@ class TypeWithOptions(NamedTuple):
     options: Dict[str, Any] = {}
 
 
-class GeneratorDiscriminator(NamedTuple):
+class Models(NamedTuple):
     generator: TypeWithOptions
     discriminator: TypeWithOptions
+    source_encoder: Optional[TypeWithOptions] = None
 
 
 class MLflow(NamedTuple):
@@ -139,8 +144,8 @@ else:
 
 class Configuration(NamedTuple):
     dataset: Dataset
-    models: GeneratorDiscriminator
-    optimizers: GeneratorDiscriminator
+    models: Models
+    optimizers: Models
     loss: TypeWithOptions
     train: Train
     runtime_options: RuntimeOptions = RuntimeOptions(
@@ -148,11 +153,13 @@ class Configuration(NamedTuple):
 
 
 def _create_generator_discriminator_info(
-        data: Dict[str, Any]) -> GeneratorDiscriminator:
+        data: Dict[str, Any]) -> Models:
     generator = TypeWithOptions(**data['generator'])
     discriminator = TypeWithOptions(**data['discriminator'])
+    source_encoder = TypeWithOptions(**data['source_encoder']) \
+        if 'source_encoder' in data else None
 
-    return GeneratorDiscriminator(generator, discriminator)
+    return Models(generator, discriminator, source_encoder)
 
 
 def load_configuration(config_file: IO) -> Configuration:

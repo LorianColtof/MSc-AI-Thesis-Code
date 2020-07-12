@@ -73,19 +73,7 @@ class AbstractBaseTrainer(ABC):
         if not self.discriminator_optimizers:
             self.optimize_discriminator = False
 
-        models_path: Optional[str] = None
-        if self.config.train.output_directory:
-            images_path = os.path.join(self.config.train.output_directory,
-                                       'images')
-            models_path = os.path.join(self.config.train.output_directory,
-                                       'models')
-
-            os.makedirs(self.config.train.output_directory, exist_ok=True)
-            os.makedirs(images_path, exist_ok=True)
-            os.makedirs(models_path, exist_ok=True)
-        else:
-            tempdir = tempfile.TemporaryDirectory(prefix='gan-trainer')
-            images_path = tempdir.name
+        models_path, images_path = self._prepare_directories()
 
         steps = 0
         epochs = 0
@@ -161,7 +149,7 @@ class AbstractBaseTrainer(ABC):
 
             print(f'Generator loss: {generator_loss}')
 
-            self._optimize_generator(loss)
+            self._optimize_generator(loss, self.generator_optimizer)
 
             if steps % self.config.train.save_interval == 0 and steps > 0:
                 print("Saving images and models")
@@ -207,6 +195,23 @@ class AbstractBaseTrainer(ABC):
                 "does not exist.")
 
         return optimizer(params=model_params, **kwargs)
+
+    def _prepare_directories(self) -> Tuple[str, str]:
+        models_path: Optional[str] = None
+        if self.config.train.output_directory:
+            images_path = os.path.join(self.config.train.output_directory,
+                                       'images')
+            models_path = os.path.join(self.config.train.output_directory,
+                                       'models')
+
+            os.makedirs(self.config.train.output_directory, exist_ok=True)
+            os.makedirs(images_path, exist_ok=True)
+            os.makedirs(models_path, exist_ok=True)
+        else:
+            tempdir = tempfile.TemporaryDirectory(prefix='gan-trainer')
+            images_path = tempdir.name
+
+        return models_path, images_path
 
     def _load_checkpoints(self, checkpoints_path: str) -> Tuple[int, int]:
         print("Loading checkpoints")
@@ -322,7 +327,7 @@ class AbstractBaseTrainer(ABC):
         loss.backward()
         optimizer.step()
 
-    def _optimize_generator(self, loss: Tensor):
-        self.generator_optimizer.zero_grad()
+    def _optimize_generator(self, loss: Tensor, optimizer: Optimizer):
+        optimizer.zero_grad()
         loss.backward()
-        self.generator_optimizer.step()
+        optimizer.step()

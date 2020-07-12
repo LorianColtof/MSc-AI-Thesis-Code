@@ -8,6 +8,8 @@ from trainers.mswd_trainer import MaxSlicedWassersteinLossTrainer, \
     SampledSlicedWassersteinLossTrainer
 from trainers.ot_trainer import OTLossTrainer
 from trainers.wgan_gp_trainer import WassersteinGPLossTrainer
+from trainers.multimarginal.mwgan_trainer \
+    import MultimarginalWassersteinGPLossTrainer
 
 
 def debugger_active() -> bool:
@@ -22,17 +24,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-file', '-f', type=argparse.FileType('r'),
                         required=True)
+    parser.add_argument('--no-cuda', action='store_true')
 
     args = parser.parse_args()
 
     config = configuration.load_configuration(args.config_file)
 
+    config.runtime_options['device'] = torch.device('cpu')
+
     if torch.cuda.is_available():
-        print("Using CUDA")
-        config.runtime_options['device'] = torch.device('cuda')
+        if args.no_cuda:
+            print("CUDA is disabled. Using CPU.")
+        else:
+            print("Using CUDA")
+            config.runtime_options['device'] = torch.device('cuda')
     else:
         print("CUDA is not available, falling back to CPU")
-        config.runtime_options['device'] = torch.device('cpu')
 
     if debugger_active():
         print("Debugger is active, using num_workers=0 for DataLoaders")
@@ -54,6 +61,8 @@ def main():
         trainer = SampledSlicedWassersteinLossTrainer(config)
     elif config.train.type == 'wgan_gp':
         trainer = WassersteinGPLossTrainer(config)
+    elif config.train.type == 'mwgan_gp':
+        trainer = MultimarginalWassersteinGPLossTrainer(config)
     else:
         raise Exception(f'Invalid training type: {config.train.type}')
 

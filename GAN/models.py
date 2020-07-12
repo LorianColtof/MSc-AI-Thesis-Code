@@ -1,5 +1,5 @@
 import math
-from typing import Any
+from typing import Any, Tuple
 
 import torch
 import torch.nn as nn
@@ -612,6 +612,22 @@ class MnistCNNEnhancedDiscriminator(nn.Module):
                 self.final_linear.weight.data, p=2, dim=1)
 
 
+class MnistCNNEnhancedDiscriminatorWithClassifier(nn.Module):
+    def __init__(self, input_dim: int, num_classes: int):
+        super().__init__()
+
+        self.main = MnistCNNEnhancedDiscriminator(
+            input_dim, include_final_linear=False)
+        self.conv_cls = nn.Conv2d(64, num_classes, kernel_size=2, bias=False)
+
+    def forward(self, input: torch.Tensor) \
+            -> Tuple[torch.Tensor, torch.Tensor]:
+        out_src = self.main(input).reshape(-1, 64, 2, 2)
+        out_cls = self.conv_cls(out_src)
+
+        return out_src, out_cls.view(out_cls.size(0), out_cls.size(1))
+
+
 class IdentityDiscriminator(nn.Module):
     def __init__(self, input_dim, include_final_linear=True,
                  final_linear_bias=True):
@@ -721,6 +737,60 @@ class EnhancedCelebaGenerator(nn.Module):
         output = self.convolutions(output)
 
         return output
+
+
+class MnistEncoder(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int,
+                 res_block_repeat: int = 3):
+        super().__init__()
+
+        self.convolutions = nn.Sequential(
+            # 28 x 28 x 1
+            nn.Conv2d(1, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.01),
+
+            # 28 x 28 x 32
+            nn.MaxPool2d(3, 2, 1),
+
+            # 14 x 14 x 32
+            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 14 x 14 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 7 x 7 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 7 x 7 x 64
+            nn.MaxPool2d(3, 2, 1),
+
+            # 4 x 4 x 64
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.01),
+
+            # 4 x 4 x 64
+        )
+
+        self.res_blocks = nn.Sequential(*[
+            Conv2dResidualBlock(dim_in=64, dim_out=64)
+            for _ in range(res_block_repeat)
+        ])
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = self.convolutions(input)
+        output = self.res_blocks(output)
+
+        return output.reshape(-1, 4 * 4 * 64)
 
 
 def load_model(model_type: str, **kwargs: Any) -> nn.Module:
