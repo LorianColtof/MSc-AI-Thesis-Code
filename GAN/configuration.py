@@ -50,8 +50,7 @@ config_schema = {
             "required": ["generator", "discriminator"],
             "properties": {
                 "generator": type_with_options_schema,
-                "discriminator": type_with_options_schema,
-                "source_encoder": type_with_options_schema
+                "discriminator": type_with_options_schema
             }
         },
         "loss": type_with_options_schema,

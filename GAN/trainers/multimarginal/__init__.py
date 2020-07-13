@@ -27,7 +27,6 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
     use_one_generator_optimizer: bool = False
 
     encoder_network: Module
-    encoder_optimizer: Optimizer
     optimize_encoder = True
 
     current_step: int
@@ -80,7 +79,8 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
         if self.use_one_generator_optimizer:
             optimizer = super()._load_optimizer(
                 self.config.optimizers.generator.type,
-                itertools.chain(*(network.parameters()
+                itertools.chain(self.encoder_network.parameters(),
+                                *(network.parameters()
                                 for network in self.generator_networks)),
                 **self.config.optimizers.generator.options)
 
@@ -101,16 +101,7 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
 
         if self.encoder_network:
             self.encoder_network.to(device)
-
-            if not self.config.optimizers.source_encoder:
-                raise Exception("optimizers.source_encoder is required "
-                                "when models.source_encoder is present.")
-
-            if list(self.encoder_network.parameters()):
-                self.encoder_optimizer = super()._load_optimizer(
-                    self.config.optimizers.source_encoder.type,
-                    self.encoder_network.parameters(),
-                    **self.config.optimizers.source_encoder.options)
+            self.optimize_encoder = True
 
         models_path, images_path = self._prepare_directories()
 
@@ -197,6 +188,8 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
                         mlflow.pytorch.log_model(
                             disc,
                             f'models/discriminator_{i}_{str_step_epoch}/')
+
+            self.current_step += 1
 
     def _load_checkpoints(self, checkpoints_path: str) -> int:
         # TODO: implement
