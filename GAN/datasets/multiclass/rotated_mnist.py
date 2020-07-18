@@ -1,6 +1,9 @@
 import os
+from typing import List, Dict
 
 import torch
+from torch import Tensor
+from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 from torchvision import datasets
@@ -10,9 +13,6 @@ from configuration import Dataset
 
 
 class RotatedMnistDataset(AbstractBaseMulticlassDataset):
-    _source_samples_plot: torch.Tensor
-    _sample_image_size = 10
-
     def __init__(self, dataset_config: Dataset, device: torch.device,
                  num_workers: int, batch_size: int, latent_dimension: int,
                  drop_last: bool = False):
@@ -44,3 +44,27 @@ class RotatedMnistDataset(AbstractBaseMulticlassDataset):
                 self.source_dataloader = dataloader
             else:
                 self.target_dataloaders[_class] = dataloader
+
+    def save_generated_data(self, source_data: Tensor,
+                            generated_data: Dict[str, Tensor],
+                            images_path: str, filename: str) -> str:
+        num_samples = source_data.size(0)
+
+        img_list = []
+        for i in range(num_samples):
+            img_src = source_data[i, :, :, :]
+            img_list.append(img_src.cpu())
+            for _class in sorted(generated_data.keys()):
+               img_tgt = generated_data[_class][i]
+               img_list.append(img_tgt.cpu())
+
+        path = os.path.join(images_path, filename + '.png')
+        save_image(img_list, path, nrow=len(self.classes),
+                   padding=0, normalize=True)
+
+        return path
+
+    @property
+    def target_classes(self) -> List[str]:
+        # Make sure they are sorted nicely
+        return ['90', '180', '270']

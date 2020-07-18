@@ -39,15 +39,13 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
                                 batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
-        # Never called
-        return torch.zeros(1)
+        assert False, "Should never be called"
 
     def _get_generator_loss(self,
                             batch_size_real: int,
                             batch_size_fake: int,
                             data_real: Tensor) -> Tensor:
-        # Never called
-        return torch.zeros(1)
+        assert False, "Should never be called"
 
     @enable_mlflow_tracking_class('config')
     def train(self):
@@ -127,6 +125,17 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
             for _class in self.dataset.target_classes
         }
 
+        self.generator_class_to_index = {
+            _class: i for i, _class in enumerate(self.dataset.target_classes)
+        }
+
+        sample_images: Tensor
+
+        with torch.no_grad():
+            sample_images = next(source_data_iterator)[0]
+            if sample_images.size(0) > 5:
+                sample_images = sample_images[:5, :, :, :]
+
         while self.current_step <= self.config.train.maximum_steps:
             print(f"Step {self.current_step}")
 
@@ -167,13 +176,32 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
 
                 str_step_epoch = f'step_{self.current_step:>06}'
 
-                # TODO: implement
-                # with torch.no_grad():
-                #     img_path = self.dataset.save_generated_data(
-                #         self.generator_network, images_path, str_step_epoch)
-                #
-                #     if self._mlflow_enabled:
-                #         mlflow.log_artifact(img_path, 'images')
+                for generator in self.generator_networks:
+                    generator.eval()
+
+                self.encoder_network.eval()
+
+                with torch.no_grad():
+                    embeddings = self.encoder_network(
+                        sample_images.to(device))
+                    generated_imgs = {
+                        _class: self.generator_networks[
+                                     self.generator_class_to_index[
+                                         _class]](embeddings)
+                        for _class in self.dataset.target_classes
+                    }
+
+                    img_path = self.dataset.save_generated_data(
+                        sample_images, generated_imgs,
+                        images_path, str_step_epoch)
+
+                    if self._mlflow_enabled:
+                        mlflow.log_artifact(img_path, 'images')
+
+                for generator in self.generator_networks:
+                    generator.train()
+
+                self.encoder_network.train()
 
                 if models_path:
                     self._save_checkpoints(models_path, 0, self.current_step)
