@@ -352,6 +352,8 @@ class MnistCNNGenerator(nn.Module):
     def __init__(self, latent_dim: int, output_dim: int):
         super().__init__()
 
+        channels = output_dim // (28 ** 2)
+
         self.initial_fc = nn.Sequential(
             nn.Linear(latent_dim, 4 * 4 * 1024),
             nn.BatchNorm1d(4 * 4 * 1024),
@@ -380,7 +382,9 @@ class MnistCNNGenerator(nn.Module):
             nn.ReLU(),
 
             # 32 x 32 x 128
-            nn.Conv2d(128, 1, kernel_size=5, stride=1, padding=0),
+            nn.Conv2d(128, channels, kernel_size=5, stride=1, padding=0),
+
+            # 28 x 28 x C
             nn.Tanh()
         )
 
@@ -396,6 +400,8 @@ class MnistCNNEnhancedGenerator(nn.Module):
     def __init__(self, latent_dim: int, output_dim: int,
                  res_block_repeat: int = 3):
         super().__init__()
+
+        channels = output_dim // (28 ** 2)
 
         self.initial_fc = nn.Sequential(
             nn.Linear(latent_dim, 4 * 4 * 1024),
@@ -434,7 +440,10 @@ class MnistCNNEnhancedGenerator(nn.Module):
             nn.ReLU(inplace=True),
 
             # 32 x 32 x 128
-            nn.Conv2d(128, 1, kernel_size=5, stride=1, padding=0, bias=False),
+            nn.Conv2d(128, channels, kernel_size=5,
+                      stride=1, padding=0, bias=False),
+
+            # 28 x 28 x C
             nn.Tanh()
         )
 
@@ -485,9 +494,11 @@ class MnistCNNDiscriminator(nn.Module):
                  final_linear_bias=True):
         super().__init__()
 
+        channels = input_dim // (28 ** 2)
+
         self.model = nn.Sequential(
-            # 28 x 28 x 1
-            nn.Conv2d(1, 32, 3, 1, 1),
+            # 28 x 28 x C
+            nn.Conv2d(channels, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
 
@@ -551,9 +562,11 @@ class MnistCNNEnhancedDiscriminator(nn.Module):
                  final_linear_bias=True):
         super().__init__()
 
+        channels = input_dim // (28 ** 2)
+
         self.model = nn.Sequential(
-            # 28 x 28 x 1
-            nn.Conv2d(1, 32, 3, 1, 1),
+            # 28 x 28 x C
+            nn.Conv2d(channels, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.01),
 
@@ -744,9 +757,11 @@ class MnistEncoder(nn.Module):
                  res_block_repeat: int = 3):
         super().__init__()
 
+        channels = output_dim // (28 ** 2)
+
         self.convolutions = nn.Sequential(
-            # 28 x 28 x 1
-            nn.Conv2d(1, 32, 3, 1, 1),
+            # 28 x 28 x C
+            nn.Conv2d(channels, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.01),
 

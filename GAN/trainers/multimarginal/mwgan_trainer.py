@@ -25,16 +25,14 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
             output_dim=self.dataset.data_dimension,
             **self.config.models.source_encoder.options)
 
-        self.generator_networks = []
-
-        for i, _class in enumerate(self.dataset.target_classes):
-            generator = models.load_model(
+        self.generator_networks = [
+            models.load_model(
                 self.config.models.generator.type,
                 latent_dim=self.config.train.latent_dimension,
                 output_dim=self.dataset.data_dimension,
                 **self.config.models.generator.options)
-
-            self.generator_networks.append(generator)
+            for _ in range(len(self.dataset.target_classes))
+        ]
 
         self.discriminator_networks.append(models.load_model(
             self.config.models.discriminator.type,
