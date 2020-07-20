@@ -1,4 +1,5 @@
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import List, Dict, Iterator
 import itertools
@@ -207,6 +208,11 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
                     self._save_checkpoints(models_path, 0, self.current_step)
 
                 if self._mlflow_enabled:
+                    if self.optimize_encoder:
+                        mlflow.pytorch.log_model(
+                            self.encoder_network,
+                            f'models/source_encoder_{str_step_epoch}/')
+
                     for i, generator in enumerate(self.generator_networks):
                         mlflow.pytorch.log_model(
                             generator,
@@ -225,9 +231,54 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
         return 0
 
     def _load_mlflow_checkpoints(self) -> int:
-        # TODO: implement
-        print("MLflow checkpoint loading not implemented yet")
-        return 0
+        print("Loading checkpoints")
+
+        artifact_generator_regex = re.compile(
+            r'models/generator_0_step_(\d+)')
+        checkpoints = {}
+
+        run = mlflow.active_run()
+        client = mlflow.tracking.MlflowClient()
+        artifacts = client.list_artifacts(run.info.run_id, 'models')
+
+        for artifact in artifacts:
+            match = artifact_generator_regex.match(artifact.path)
+            if not match:
+                continue
+
+            step = int(match.group(1))
+
+            checkpoints[step] = artifact
+
+        if not checkpoints:
+            print("No checkpoints available to load.")
+            return 0
+
+        load_step = max(checkpoints.keys())
+        load_artifact = checkpoints[load_step]
+
+        self.generator_networks[0] = mlflow.pytorch.load_model(
+            f'{run.info.artifact_uri}/{load_artifact.path}')
+
+        str_step_epoch = f'step_{load_step:>06}'
+
+        for i in range(1, len(self.generator_networks)):
+            path = f'{run.info.artifact_uri}' \
+                   f'/models/generator_{i}_{str_step_epoch}'
+            self.generator_networks[i] = mlflow.pytorch.load_model(path)
+
+        for i in range(len(self.discriminator_networks)):
+            path = f'{run.info.artifact_uri}' \
+                   f'/models/discriminator_{i}_{str_step_epoch}'
+            self.discriminator_networks[i] = mlflow.pytorch.load_model(path)
+
+        if self.optimize_encoder:
+            path = f'{run.info.artifact_uri}' \
+                   f'/models/source_encoder_{str_step_epoch}'
+            self.encoder_network = mlflow.pytorch.load_model(path)
+
+        print(f"Loaded checkpoints at step {load_step}")
+        return load_step + 1
 
     def _save_checkpoints(self, checkpoints_path: str,
                           epoch: int, step: int) -> str:
