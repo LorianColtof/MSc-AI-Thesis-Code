@@ -1,5 +1,3 @@
-from typing import List
-
 import torch
 from torchvision.transforms import transforms
 

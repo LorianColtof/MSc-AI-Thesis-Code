@@ -7,12 +7,14 @@ from datasets.mnist import MnistDataset
 from datasets.multiclass.base import AbstractBaseMulticlassDataset
 from datasets.multiclass.colored_mnist import ColoredMnistDataset
 from datasets.multiclass.rotated_mnist import RotatedMnistDataset
+from datasets.multiclass.celeba import CelebaDataset as MulticlassCelebaDataset
 
 _datasets = {
     'mnist': MnistDataset,
     'celeba': CelebaDataset,
     'multiclass.rotated_mnist': RotatedMnistDataset,
-    'multiclass.colored_mnist': ColoredMnistDataset
+    'multiclass.colored_mnist': ColoredMnistDataset,
+    'multiclass.celeba': MulticlassCelebaDataset
 }
 
 

@@ -7,8 +7,8 @@ class MWGANCelebaDiscriminator(nn.Module):
     """
     Discriminator network with PatchGAN.
     """
-    def __init__(self, input_dim,
-                 image_size=128, conv_dim=64, c_dim=5, repeat_num=6):
+    def __init__(self, input_dim, num_classes,
+                 image_size=128, conv_dim=64, repeat_num=6):
         super().__init__()
 
         layers = []
@@ -27,7 +27,7 @@ class MWGANCelebaDiscriminator(nn.Module):
         self.main = nn.Sequential(*layers)
         self.conv1 = nn.Conv2d(curr_dim, 1, kernel_size=3,
                                stride=1, padding=1, bias=False)
-        self.conv2 = nn.Conv2d(curr_dim, c_dim,
+        self.conv2 = nn.Conv2d(curr_dim, num_classes,
                                kernel_size=kernel_size, bias=False)
 
     def forward(self, x):
@@ -41,7 +41,7 @@ class MWGANCelebaResEncoder(nn.Module):
     """
     Encoder network.
     """
-    def __init__(self, latent_dim, conv_dim=64, repeat_num=3):
+    def __init__(self, latent_dim, output_dim, conv_dim=64, repeat_num=3):
         super().__init__()
 
         layers = []
