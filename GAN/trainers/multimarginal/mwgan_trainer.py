@@ -13,15 +13,15 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
     def __init__(self, config: Configuration):
         super().__init__(config)
 
-        Lf = self.config.loss.options['const_inter_domain']
+        Lf = self.config.loss.options.get('const_inter_domain')
         if not Lf:
             Lf = 1
 
-        lambda_cls = self.config.loss.options['const_cls']
+        lambda_cls = self.config.loss.options.get('const_cls')
         if not lambda_cls:
             lambda_cls = 1
 
-        lambda_reg = self.config.loss.options['const_reg']
+        lambda_reg = self.config.loss.options.get('const_reg')
         if not lambda_reg:
             lambda_reg = 100
 
