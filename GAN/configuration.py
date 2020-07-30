@@ -20,6 +20,7 @@ type_with_options_schema = {
 }
 
 default_critic_steps = 1
+default_num_samples = 10
 
 config_schema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -58,7 +59,8 @@ config_schema = {
             "type": "object",
             "required": ["save_interval", "maximum_epochs", "maximum_steps"],
             "default": {
-                "critic_steps": default_critic_steps
+                "critic_steps": default_critic_steps,
+                "num_samples": default_num_samples
             },
             "properties": {
                 "type": {"type": "string"},
@@ -71,6 +73,7 @@ config_schema = {
                 "use_dual_critic_networks": {"type": "boolean"},
                 "use_checkpoints": {"type": "boolean"},
                 "use_double_dual_transform": {"type": "boolean"},
+                "num_samples": {"type": "integer"},
                 "mlflow": {
                     "type": "object",
                     "required": ["enabled", "experiment_name"],
@@ -129,6 +132,7 @@ class Train(NamedTuple):
     use_dual_critic_networks: bool = False
     use_checkpoints: bool = True
     use_double_dual_transform: bool = True
+    num_samples: int = default_num_samples
 
 
 if sys.version_info >= (3, 8):

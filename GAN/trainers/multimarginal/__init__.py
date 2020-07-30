@@ -134,8 +134,9 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
 
         with torch.no_grad():
             sample_images = next(source_data_iterator)[0]
-            if sample_images.size(0) > 5:
-                sample_images = sample_images[:5, :, :, :]
+            num_samples = self.config.train.num_samples
+            if sample_images.size(0) > num_samples:
+                sample_images = sample_images[:num_samples, :, :, :]
 
         while self.current_step <= self.config.train.maximum_steps:
             print(f"Step {self.current_step}")

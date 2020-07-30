@@ -13,6 +13,23 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
     def __init__(self, config: Configuration):
         super().__init__(config)
 
+        Lf = self.config.loss.options['const_inter_domain']
+        if not Lf:
+            Lf = 1
+
+        lambda_cls = self.config.loss.options['const_cls']
+        if not lambda_cls:
+            lambda_cls = 1
+
+        lambda_reg = self.config.loss.options['const_reg']
+        if not lambda_reg:
+            lambda_reg = 100
+
+        self.Lf = Lf
+        self.lambda_cls = lambda_cls
+        self.lambda_reg = lambda_reg
+
+
         self.use_one_generator_optimizer = True
 
     def _initialize_networks(self):
@@ -101,19 +118,14 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
             grad_outputs=torch.ones(out_interp.size(), device=device),
             create_graph=True, retain_graph=True, only_inputs=True)[0]
 
-        # TODO: create hyperparameters
-        Lf = 1
-        lambda_cls = 1
-        lambda_reg = 1
-
         gradients_norm = gradients.norm(2, dim=1)
 
         zeros = torch.zeros_like(gradients_norm, device=device)
-        penalty = torch.max(gradients_norm - Lf, zeros).mean() ** 2
+        penalty = torch.max(gradients_norm - self.Lf, zeros).mean() ** 2
 
         total_loss = (-total_adversarial_loss
-                      + lambda_cls * total_classification_loss
-                      + lambda_reg * penalty)
+                      + self.lambda_cls * total_classification_loss
+                      + self.lambda_reg * penalty)
 
         return total_loss
 
