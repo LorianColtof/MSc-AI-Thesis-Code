@@ -15,8 +15,7 @@ from .base import AbstractBaseMulticlassDataset
 class AbstractMnistBase(AbstractBaseMulticlassDataset, ABC):
     def __init__(self, classes: List[str], transform: Any,
                  channels: int, dataset_config: Dataset,
-                 num_workers: int, batch_size: int,
-                 drop_last: bool = False):
+                 num_workers: int, batch_size: int):
         self.data_dimension = 28 * 28 * channels
 
         if not dataset_config.source_class:
@@ -35,7 +34,7 @@ class AbstractMnistBase(AbstractBaseMulticlassDataset, ABC):
                     os.path.join(dataset_config.directory, _class),
                     transform=transform),
                 batch_size=batch_size, shuffle=True, pin_memory=True,
-                drop_last=drop_last, num_workers=num_workers)
+                drop_last=True, num_workers=num_workers)
 
             if _class == self.source_class:
                 self.source_dataloader = dataloader

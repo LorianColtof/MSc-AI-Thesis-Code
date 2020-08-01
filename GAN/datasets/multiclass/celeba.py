@@ -13,8 +13,7 @@ from datasets.multiclass.base import AbstractBaseMulticlassDataset
 
 class CelebaDataset(AbstractBaseMulticlassDataset):
     def __init__(self, dataset_config: Dataset, device: torch.device,
-                 num_workers: int, batch_size: int, latent_dimension: int,
-                 drop_last: bool = False):
+                 num_workers: int, batch_size: int, latent_dimension: int):
         if not dataset_config.source_class:
             raise Exception("dataset.source_class is required "
                             "for multi-class datasets")
@@ -46,7 +45,7 @@ class CelebaDataset(AbstractBaseMulticlassDataset):
                     os.path.join(dataset_config.directory, _class),
                     transform=transform),
                 batch_size=batch_size, shuffle=True, pin_memory=True,
-                drop_last=drop_last, num_workers=num_workers)
+                drop_last=True, num_workers=num_workers)
 
             if _class == self.source_class:
                 self.source_dataloader = dataloader
