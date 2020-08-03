@@ -314,7 +314,7 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
     @abstractmethod
     def _train_multiclass_generators(
             self, batch_size: int, data_source: Tensor,
-            target_data_iterators: Dict[str, Iterator[Tensor]]) -> Tensor:
+            target_data_iterators: Dict[str, Iterator[Tensor]]):
         pass
 
     def _log_loss(self, printable_name: str,
