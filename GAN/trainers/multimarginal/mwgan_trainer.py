@@ -104,7 +104,7 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
                                   total_adversarial_loss / num_target_classes)
 
         data_fake_cat = torch.cat(data_fake_list)
-        data_source_cat = torch.cat([data_source] * num_target_classes).data
+        data_source_cat = torch.cat([data_source] * num_target_classes)
 
         alpha = torch.rand(data_source_cat.size(0), 1, 1, 1, device=device)
 
