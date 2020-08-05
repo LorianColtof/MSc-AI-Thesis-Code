@@ -63,25 +63,29 @@ def enable_mlflow_tracking(config: Configuration) \
                                sort_keys=True).encode('utf-8')).hexdigest()
 
                 print(f"Config checksum: {config_checksum}")
-                print("Checking for runs to continue from")
-
-                current_experiment = mlflow.get_experiment_by_name(
-                    config.train.mlflow.experiment_name)
-                runs = mlflow.search_runs(
-                    experiment_ids=[current_experiment.experiment_id])
-
                 matching_run_id: Optional[str] = None
-                for _, run in runs.iterrows():
-                    run_config_checksum = run['tags.config_checksum']
-                    run_id = run['run_id']
-                    if config_checksum == run_config_checksum:
-                        print(f'Run {run_id} matches.')
-                        matching_run_id = run_id
-                        break
-                    elif not run_config_checksum:
-                        print(f'Run {run_id} misses config checksum.')
-                    else:
-                        print(f'Run {run_id} does not match.')
+
+                if config.train.use_checkpoints:
+                    print("Checking for runs to continue from")
+
+                    current_experiment = mlflow.get_experiment_by_name(
+                        config.train.mlflow.experiment_name)
+                    runs = mlflow.search_runs(
+                        experiment_ids=[current_experiment.experiment_id])
+
+                    for _, run in runs.iterrows():
+                        run_config_checksum = run['tags.config_checksum']
+                        run_id = run['run_id']
+                        if config_checksum == run_config_checksum:
+                            print(f'Run {run_id} matches.')
+                            matching_run_id = run_id
+                            break
+                        elif not run_config_checksum:
+                            print(f'Run {run_id} misses config checksum.')
+                        else:
+                            print(f'Run {run_id} does not match.')
+                else:
+                    print("Not using checkpoints, so creating a new run.")
 
                 with mlflow.start_run(run_id=matching_run_id,
                                       run_name=config.train.mlflow.run_name):
