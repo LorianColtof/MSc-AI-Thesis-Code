@@ -102,7 +102,6 @@ class MWGANCelebaResDecoder(nn.Module):
                                 stride=1, padding=3, bias=False))
         layers.append(nn.Tanh())
 
-        self.layers = layers
         self.main = nn.Sequential(*layers)
 
     def forward(self, h):

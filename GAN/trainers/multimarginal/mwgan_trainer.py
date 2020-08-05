@@ -118,6 +118,7 @@ class MultimarginalWassersteinGPLossTrainer(AbstractMultimarginalBaseTrainer):
             grad_outputs=torch.ones(out_interp.size(), device=device),
             create_graph=True, retain_graph=True, only_inputs=True)[0]
 
+        gradients = gradients.view(gradients.size(0), -1)
         gradients_norm = gradients.norm(2, dim=1)
 
         zeros = torch.zeros_like(gradients_norm, device=device)
