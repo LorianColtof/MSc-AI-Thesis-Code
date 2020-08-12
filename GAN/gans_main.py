@@ -1,6 +1,7 @@
 import argparse
 
 import torch
+import sys
 
 import configuration
 from trainers import AbstractBaseTrainer
@@ -14,11 +15,7 @@ from trainers.multimarginal.ot_trainer import MultimarginalOTLossTrainer
 
 
 def debugger_active() -> bool:
-    try:
-        import pydevd
-        return True
-    except ImportError:
-        return False
+    return sys.gettrace() is not None
 
 
 def main():
