@@ -10,6 +10,7 @@ from trainers.ot_trainer import OTLossTrainer
 from trainers.wgan_gp_trainer import WassersteinGPLossTrainer
 from trainers.multimarginal.mwgan_trainer \
     import MultimarginalWassersteinGPLossTrainer
+from trainers.multimarginal.ot_trainer import MultimarginalOTLossTrainer
 
 
 def debugger_active() -> bool:
@@ -63,6 +64,8 @@ def main():
         trainer = WassersteinGPLossTrainer(config)
     elif config.train.type == 'mwgan_gp':
         trainer = MultimarginalWassersteinGPLossTrainer(config)
+    elif config.train.type == 'm_ot_gan':
+        trainer = MultimarginalOTLossTrainer(config)
     else:
         raise Exception(f'Invalid training type: {config.train.type}')
 
