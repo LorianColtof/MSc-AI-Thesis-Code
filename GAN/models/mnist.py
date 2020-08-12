@@ -49,7 +49,7 @@ class MnistGenerator(nn.Module):
 
     def forward(self, z):
         # Generate images from z
-        return self.model(z)
+        return self.model(z).reshape(-1, 1, 28, 28)
 
 
 class MnistCNNGenerator(nn.Module):
@@ -399,3 +399,45 @@ class MnistEncoder(nn.Module):
         output = self.res_blocks(output)
 
         return output.reshape(-1, 4 * 4 * 64)
+
+
+class MnistEnhancedEncoder(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int,
+                 res_block_repeat: int = 3):
+        super().__init__()
+
+        channels = output_dim // (28 ** 2)
+
+        self.convolutions = nn.Sequential(
+            # 28 x 28 x C
+            nn.Conv2d(channels, 32, 3, 1, 1, bias=False),
+            nn.InstanceNorm2d(32, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 28 x 28 x 32
+
+            nn.Conv2d(32, 64, kernel_size=3,
+                      stride=2, padding=3, bias=False),
+            nn.InstanceNorm2d(64, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 16 x 16 x 64
+
+            nn.Conv2d(64, 128, kernel_size=5,
+                      stride=2, padding=2, bias=False),
+            nn.InstanceNorm2d(128, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+
+            # 8 x 8 x 128
+        )
+
+        self.res_blocks = nn.Sequential(*[
+            Conv2dResidualBlock(dim_in=128, dim_out=128)
+            for _ in range(res_block_repeat)
+        ])
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = self.convolutions(input)
+        output = self.res_blocks(output)
+
+        return output.reshape(-1, 8 * 8 * 128)
