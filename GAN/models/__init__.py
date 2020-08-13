@@ -2,7 +2,8 @@ from typing import Any
 
 from models.celeba import *
 from models.mnist import *
-from models.mwgan import *
+from models.multimarginal_celeba import *
+from models.multimarginal_mnist import *
 
 
 class IdentityDiscriminator(nn.Module):
