@@ -1,4 +1,4 @@
-from typing import List, Dict, Iterator
+from typing import List, Dict, Iterator, Tuple
 
 import torch
 from torch import Tensor
@@ -74,10 +74,36 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         norm_sum = torch.zeros([batch_size] * num_dimensions, device=device)
         for i, d1 in enumerate(data_unsqueezed_list):
             for d2 in data_unsqueezed_list[i + 1:]:
-                norm = (torch.norm(d1 - d2, dim=-1, p=q) ** p) / p
+                norm = torch.norm(d1 - d2, dim=-1, p=q) ** p
                 norm_sum += norm
 
-        return norm_sum / num_dimensions
+        return norm_sum / (num_dimensions * p)
+
+    def _get_adversarial_loss_reg(self, data_source: Tensor,
+                                  data_fake_list: List[Tensor],
+                                  discriminators_fake: List[Tensor],
+                                  batch_size: int) -> Tuple[Tensor, Tensor]:
+        num_target_classes = len(data_fake_list)
+
+        disc_real_out, _ = self.discriminator_networks[0](data_source)
+
+        # B x 1
+        disc_real_out = disc_real_out \
+            .reshape(batch_size, -1).mean(dim=1)
+
+        # B x ... x B   (num_target_classes + 1 times)
+        cost_tensor = self._data_distance([data_source] + data_fake_list, 2, 2)
+
+        reg_sum = -cost_tensor + disc_real_out.reshape(
+            [-1] + [1] * num_target_classes)
+        for dim, disc_fake_out in enumerate(discriminators_fake):
+            reg_sum_shape = ([1] * (dim + 1) + [-1] +
+                             [1] * (num_target_classes - dim - 1))
+            reg_sum += disc_fake_out.reshape(*reg_sum_shape)
+
+        adv_loss_reg = self.epsilon * torch.exp(reg_sum / self.epsilon).mean()
+
+        return adv_loss_reg, disc_real_out
 
     def _get_multiclass_discriminator_loss(
             self, discriminator_index: int,
@@ -123,24 +149,8 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
 
             discriminators_fake.append(disc_fake_out)
 
-        disc_real_out, _ = self.discriminator_networks[0](
-            data_source)
-
-        # B x 1
-        disc_real_out = disc_real_out \
-            .reshape(batch_size, -1).mean(dim=1)
-
-        # B x ... x B   (num_target_classes + 1 times)
-        cost_tensor = self._data_distance([data_source] + data_fake_list, 2, 2)
-
-        reg_sum = -cost_tensor + disc_real_out.reshape(
-            [-1] + [1] * num_target_classes)
-        for dim, disc_fake_out in enumerate(discriminators_fake):
-            reg_sum_shape = ([1] * (dim + 1) + [-1] +
-                             [1] * (num_target_classes - dim - 1))
-            reg_sum += disc_fake_out.reshape(*reg_sum_shape)
-
-        adv_loss_reg = self.epsilon * torch.exp(reg_sum / self.epsilon).mean()
+        adv_loss_reg, disc_real_out = self._get_adversarial_loss_reg(
+            data_source, data_fake_list, discriminators_fake, batch_size)
 
         total_adversarial_loss = (
                 disc_real_out.mean() +
@@ -196,24 +206,8 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
 
             discriminators_fake.append(disc_fake_out)
 
-        disc_real_out, _ = self.discriminator_networks[0](
-            data_source)
-
-        # B x 1
-        disc_real_out = disc_real_out \
-            .reshape(batch_size, -1).mean(dim=1)
-
-        # B x ... x B   (num_target_classes + 1 times)
-        cost_tensor = self._data_distance([data_source] + data_fake_list, 2, 2)
-
-        reg_sum = -cost_tensor + disc_real_out.reshape(
-            [-1] + [1] * num_target_classes)
-        for dim, disc_fake_out in enumerate(discriminators_fake):
-            reg_sum_shape = ([1] * (dim + 1) + [-1] +
-                             [1] * (num_target_classes - dim - 1))
-            reg_sum += disc_fake_out.reshape(*reg_sum_shape)
-
-        adv_loss_reg = self.epsilon * torch.exp(reg_sum / self.epsilon).mean()
+        adv_loss_reg, disc_real_out = self._get_adversarial_loss_reg(
+            data_source, data_fake_list, discriminators_fake, batch_size)
 
         # Skip disc_real_out.mean() since it's constant
         # w.r.t. generator parameters
