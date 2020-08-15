@@ -20,6 +20,13 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         self.cls_loss_type = self.config.loss.type
 
         self.epsilon = self.config.loss.options['epsilon']
+        self.enable_adaptive_reg_param = self.config.loss.options.get(
+            'enable_adaptive_reg_param', False)
+
+        # Limit for each term in the regularization term (exp(L))
+        # before applying regularization parameter adaption
+        self.adaptive_reg_param_sum_limit = self.config.loss.options.get(
+            'adaptive_reg_param_sum_limit', 50)
 
         if self.cls_loss_type not in {'LS', 'BCE'}:
             raise Exception('cls_loss_type must be one of: LS, BCE')
@@ -101,7 +108,21 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
                              [1] * (num_target_classes - dim - 1))
             reg_sum += disc_fake_out.reshape(*reg_sum_shape)
 
-        adv_loss_reg = self.epsilon * torch.exp(reg_sum / self.epsilon).mean()
+        if self.enable_adaptive_reg_param:
+            epsilon_low = self.epsilon
+            sum_limit_normalized = \
+                self.adaptive_reg_param_sum_limit * epsilon_low
+
+            reg_sum_max = reg_sum.max()
+
+            if reg_sum_max > sum_limit_normalized:
+                epsilon = reg_sum_max / self.adaptive_reg_param_sum_limit
+            else:
+                epsilon = epsilon_low
+        else:
+            epsilon = self.epsilon
+
+        adv_loss_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
 
         return adv_loss_reg, disc_real_out
 
