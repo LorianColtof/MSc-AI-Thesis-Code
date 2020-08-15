@@ -124,10 +124,11 @@ class AbstractBaseTrainer(ABC):
                         print(f'Discriminator {discriminator_index} loss: '
                               f'{discriminator_loss}')
 
+                        name = f'discriminator_{discriminator_index}_loss'
                         if self._mlflow_enabled:
-                            mlflow.log_metric(
-                                f'discriminator_{discriminator_index}_loss',
-                                discriminator_loss, steps)
+                            mlflow.log_metric(name, discriminator_loss, steps)
+
+                        self._check_tensor_nan_inf(loss, name)
 
                         self._optimize_discriminator(
                             loss,
@@ -148,6 +149,8 @@ class AbstractBaseTrainer(ABC):
                 mlflow.log_metric('generator_loss', generator_loss, steps)
 
             print(f'Generator loss: {generator_loss}')
+
+            self._check_tensor_nan_inf(loss, 'generator_loss')
 
             self._optimize_generator(loss, self.generator_optimizer)
 
@@ -306,6 +309,11 @@ class AbstractBaseTrainer(ABC):
         print(f"Loaded checkpoints at step {load_step} (epoch {load_epoch})")
 
         return load_step + 1, load_epoch
+
+    def _check_tensor_nan_inf(self, tensor: Tensor, name: str):
+        if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+            raise Exception(
+                f"One or more values in {name} became NaN or +/-inf")
 
     @abstractmethod
     def _get_discriminator_loss(self,

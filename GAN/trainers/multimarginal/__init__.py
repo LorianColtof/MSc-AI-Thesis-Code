@@ -318,10 +318,12 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
         pass
 
     def _log_loss(self, printable_name: str,
-                  metric_name: str, loss: Tensor):
-        loss = loss.item()
+                  metric_name: str, loss_tensor: Tensor):
+        loss = loss_tensor.item()
+
+        print(f'{printable_name}: {loss}')
 
         if self._mlflow_enabled:
             mlflow.log_metric(metric_name, loss, self.current_step)
 
-        print(f'{printable_name}: {loss}')
+        self._check_tensor_nan_inf(loss_tensor, metric_name)
