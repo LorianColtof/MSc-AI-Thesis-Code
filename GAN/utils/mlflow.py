@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import os
 from functools import wraps
 from typing import Callable, Any, Optional, NamedTuple, Union
 
@@ -91,7 +92,12 @@ def enable_mlflow_tracking(config: Configuration) \
                                       run_name=config.train.mlflow.run_name):
                     if not matching_run_id:
                         mlflow.set_tag('config_checksum', config_checksum)
+
                         _log_configuration(config)
+
+                    slurm_jobid = os.environ.get('SLURM_JOBID')
+                    if slurm_jobid:
+                        mlflow.set_tag('slurm_jobid', slurm_jobid)
 
                     f(*args, **kwargs)
             else:
