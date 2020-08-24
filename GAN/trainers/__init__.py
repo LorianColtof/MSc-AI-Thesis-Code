@@ -211,8 +211,8 @@ class AbstractBaseTrainer(ABC):
             os.makedirs(images_path, exist_ok=True)
             os.makedirs(models_path, exist_ok=True)
         else:
-            tempdir = tempfile.TemporaryDirectory(prefix='gan-trainer')
-            images_path = tempdir.name
+            self.tempdir = tempfile.TemporaryDirectory(prefix='gan-trainer-')
+            images_path = self.tempdir.name
 
         return models_path, images_path
 
