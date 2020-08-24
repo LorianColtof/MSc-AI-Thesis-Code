@@ -1,8 +1,8 @@
 from typing import List, Dict, Iterator, Tuple
 
 import torch
-from torch import Tensor
 import torch.nn.functional as F
+from torch import Tensor
 
 import models
 from configuration import Configuration
@@ -22,6 +22,12 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         self.epsilon = self.config.loss.options['epsilon']
         self.enable_adaptive_reg_param = self.config.loss.options.get(
             'enable_adaptive_reg_param', False)
+        self.enable_log_reg_term = self.config.loss.options.get(
+            'enable_log_reg_term', False)
+
+        if self.enable_adaptive_reg_param and self.enable_log_reg_term:
+            raise Exception('Cannot have both enable_adaptive_reg_param '
+                            'and enable_log_reg_term set to true.')
 
         # Limit for each term in the regularization term (exp(L))
         # before applying regularization parameter adaption
@@ -108,6 +114,9 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
                              [1] * (num_target_classes - dim - 1))
             reg_sum += disc_fake_out.reshape(*reg_sum_shape)
 
+        epsilon: float
+        adv_loss_reg: Tensor
+
         if self.enable_adaptive_reg_param:
             epsilon_low = self.epsilon
             sum_limit_normalized = \
@@ -122,7 +131,13 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         else:
             epsilon = self.epsilon
 
-        adv_loss_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
+        if self.enable_log_reg_term:
+            reg_sum_epsilon = reg_sum / epsilon
+            item_max = reg_sum_epsilon.max()
+            adv_loss_reg = epsilon * (
+                    item_max + (reg_sum_epsilon - item_max).exp().mean().log())
+        else:
+            adv_loss_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
 
         return adv_loss_reg, disc_real_out
 
