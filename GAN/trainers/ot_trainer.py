@@ -38,6 +38,13 @@ class AbstractBaseOTLossHelper(ABC):
 
     def __init__(self, config: Configuration):
         self.config = config
+        self.enable_adaptive_reg_param = self.config.loss.options.get(
+            'enable_adaptive_reg_param', False)
+
+        # Limit for each term in the regularization term (exp(L))
+        # before applying regularization parameter adaption
+        self.adaptive_reg_param_sum_limit = self.config.loss.options.get(
+            'adaptive_reg_param_sum_limit', 50)
 
     @abstractmethod
     def dual_variable_transform(self, label_real: Tensor,
@@ -48,6 +55,29 @@ class AbstractBaseOTLossHelper(ABC):
     def objective_function(self, label_real: Tensor, label_fake: Tensor,
                            cost_matrix: Tensor) -> Tensor:
         pass
+
+    def _get_default_reg_term(self, label_real: Tensor, label_fake: Tensor,
+                              cost_matrix: Tensor, epsilon_low: float)\
+            -> Tensor:
+        reg_sum = -cost_matrix + label_fake + label_real.T
+
+        epsilon: float
+        if self.enable_adaptive_reg_param:
+            sum_limit_normalized = \
+                self.adaptive_reg_param_sum_limit * epsilon_low
+
+            reg_sum_max = reg_sum.max()
+
+            if reg_sum_max > sum_limit_normalized:
+                epsilon = reg_sum_max / self.adaptive_reg_param_sum_limit
+            else:
+                epsilon = epsilon_low
+        else:
+            epsilon = epsilon_low
+
+        val_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
+
+        return val_reg
 
 
 class BalancedOTLossHelper(AbstractBaseOTLossHelper):
@@ -66,9 +96,8 @@ class BalancedOTLossHelper(AbstractBaseOTLossHelper):
                            cost_matrix: Tensor) -> Tensor:
         val0 = torch.mean(label_fake)
         val1 = torch.mean(label_real)
-
-        tmp0 = (-cost_matrix + (label_fake + torch.t(label_real)))
-        val_reg = self.epsilon * torch.mean(torch.exp(tmp0 / self.epsilon))
+        val_reg = self._get_default_reg_term(label_real, label_fake,
+                                             cost_matrix, self.epsilon)
 
         val = val0 + val1 - val_reg
         return val
@@ -93,9 +122,8 @@ class UnbalancedOTLossHelper(AbstractBaseOTLossHelper):
                            cost_matrix: Tensor) -> Tensor:
         val_fake = self.tau * torch.mean(1 - torch.exp(-label_fake / self.tau))
         val_real = self.tau * torch.mean(1 - torch.exp(-label_real / self.tau))
-
-        tmp0 = (-cost_matrix + (label_fake + label_real.T))
-        val_reg = self.epsilon * torch.mean(torch.exp(tmp0 / self.epsilon))
+        val_reg = self._get_default_reg_term(label_real, label_fake,
+                                             cost_matrix, self.epsilon)
 
         val = val_fake + val_real - val_reg
         return val
@@ -117,6 +145,15 @@ class OTLossTrainer(AbstractBaseTrainer):
             self.ot_loss_helper = BalancedOTLossHelper(config)
         else:
             raise Exception(f'Unknown loss type: {config.loss.type}')
+
+        self.use_same_discriminator_as_potentials = self.config.loss\
+            .options.get('use_same_discriminator_as_potentials')
+
+        if self.use_same_discriminator_as_potentials \
+                and self.config.train.use_dual_critic_networks:
+            raise Exception('Incompatible options: '
+                            'loss.options.use_same_discriminator_as_potentials'
+                            ' and train.use_dual_critic_networks')
 
     def _initialize_networks(self):
         self.generator_network = models.load_model(
@@ -336,6 +373,16 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         return loss_val
 
+    def _get_single_loss_no_transform(self, data_real: Tensor,
+                                      data_fake: Tensor,
+                                      cost_matrix_cross: Tensor) -> Tensor:
+        label_real = self.discriminator_networks[0](data_real)
+        label_fake = self.discriminator_networks[0](data_fake)
+
+        loss_val = self.ot_loss_helper.objective_function(
+            label_real, label_fake, cost_matrix_cross)
+        return loss_val
+
     def _get_discriminator_loss(self,
                                 discriminator_index: int,
                                 batch_size_real: int,
@@ -390,6 +437,9 @@ class OTLossTrainer(AbstractBaseTrainer):
                 print("Penalty:", transform_penalty.item())
 
                 loss_val -= transform_penalty
+        elif self.use_same_discriminator_as_potentials:
+            loss_val = self._get_single_loss_no_transform(
+                data_real, data_fake, cost_matrix_cross)
         else:
             loss_val = self._get_single_loss(data_fake, cost_matrix_cross)
 
