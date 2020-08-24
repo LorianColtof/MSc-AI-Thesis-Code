@@ -2,11 +2,18 @@ import torch
 from torch import Tensor
 
 import models
+from configuration import Configuration
 from trainers import AbstractBaseTrainer
 from utils import gradient_penalty
 
 
 class WassersteinGPLossTrainer(AbstractBaseTrainer):
+    def __init__(self, config: Configuration):
+        super().__init__(config)
+
+        self.gradient_penalty_weight = config.loss.options.get(
+            'gradient_penalty_weight', 10)
+
     def _initialize_networks(self):
         self.generator_network = models.load_model(
             self.config.models.generator.type,
@@ -39,8 +46,8 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
                                    data_real, data_fake)
         disc_generated = self.discriminator_networks[0](data_fake)
         disc_real = -self.discriminator_networks[0](data_real)
-        loss_discriminator = (-(disc_generated.mean() + disc_real.mean()) +
-                              penalty)
+        loss_discriminator = (-disc_generated.mean() + disc_real.mean() +
+                              self.gradient_penalty_weight * penalty)
 
         return loss_discriminator
 

@@ -1,8 +1,7 @@
 import torch
 
 
-def gradient_penalty(discriminator, samples_real, samples_generated,
-                     lambda_reg=5):
+def gradient_penalty(discriminator, samples_real, samples_generated):
     device = samples_real.device
 
     batch_size = samples_real.shape[0]
@@ -23,6 +22,6 @@ def gradient_penalty(discriminator, samples_real, samples_generated,
         grad_outputs=torch.ones(disc_interpolates.size(), device=device),
         create_graph=True, retain_graph=True, only_inputs=True)[0]
 
-    penalty = (((gradients.norm(2, dim=1) - 1) ** 2).mean()
-               * lambda_reg)
+    penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+
     return penalty
