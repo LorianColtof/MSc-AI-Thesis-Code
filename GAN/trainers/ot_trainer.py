@@ -147,7 +147,7 @@ class OTLossTrainer(AbstractBaseTrainer):
             raise Exception(f'Unknown loss type: {config.loss.type}')
 
         self.use_same_discriminator_as_potentials = self.config.loss\
-            .options.get('use_same_discriminator_as_potentials')
+            .options.get('use_same_discriminator_as_potentials', False)
 
         if self.use_same_discriminator_as_potentials \
                 and self.config.train.use_dual_critic_networks:
