@@ -45,9 +45,9 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
         penalty = gradient_penalty(self.discriminator_networks[0],
                                    data_real, data_fake)
         disc_generated = self.discriminator_networks[0](data_fake)
-        disc_real = -self.discriminator_networks[0](data_real)
-        loss_discriminator = (-disc_generated.mean() + disc_real.mean() +
-                              self.gradient_penalty_weight * penalty)
+        disc_real = self.discriminator_networks[0](data_real)
+        loss_discriminator = (disc_generated.mean() - disc_real.mean()
+                              + self.gradient_penalty_weight * penalty)
 
         return loss_discriminator
 
@@ -56,7 +56,6 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
         data_fake = self._generate_data(batch_size_fake, data_real)
 
         disc_generated = self.discriminator_networks[0](data_fake)
-        disc_real = -self.discriminator_networks[0](data_real)
-        loss_generator = disc_generated.mean() + disc_real.mean()
+        loss_generator = -disc_generated.mean()
 
         return loss_generator
