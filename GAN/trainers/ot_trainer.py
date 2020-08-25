@@ -155,6 +155,14 @@ class OTLossTrainer(AbstractBaseTrainer):
                             'loss.options.use_same_discriminator_as_potentials'
                             ' and train.use_dual_critic_networks')
 
+        dist_params = list(
+            self.config.loss.options.get('dist_params', [2, 2]))
+        if len(dist_params) != 2:
+            raise Exception('dist_params should be a list of 2 ints')
+
+        self.dist_q = dist_params[0]
+        self.dist_p = dist_params[1]
+
     def _initialize_networks(self):
         self.generator_network = models.load_model(
             self.config.models.generator.type,
@@ -400,7 +408,8 @@ class OTLossTrainer(AbstractBaseTrainer):
             data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
             data_fake_flat = data_fake.reshape(batch_size_fake, -1)
-            cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat, 2, 2)
+            cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat,
+                                        self.dist_p, self.dist_q)
 
         if self.config.train.use_dual_critic_networks:
             label_fake = self.discriminator_networks[0](data_fake)
@@ -457,7 +466,8 @@ class OTLossTrainer(AbstractBaseTrainer):
         data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
         data_fake_flat = data_fake.reshape(batch_size_fake, -1)
-        cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat, 2, 2)
+        cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat,
+                                    self.dist_p, self.dist_q)
 
         if self.config.train.use_dual_critic_networks:
             label_fake = self.discriminator_networks[0](data_fake)
