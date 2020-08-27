@@ -37,6 +37,14 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         if self.cls_loss_type not in {'LS', 'BCE'}:
             raise Exception('cls_loss_type must be one of: LS, BCE')
 
+        dist_params = list(
+            self.config.loss.options.get('dist_params', [2, 2]))
+        if len(dist_params) != 2:
+            raise Exception('dist_params should be a list of 2 floats')
+
+        self.dist_q = dist_params[0]
+        self.dist_p = dist_params[1]
+
         self.idt_loss_criterion = torch.nn.L1Loss()
 
         self.use_one_generator_optimizer = True
@@ -72,7 +80,7 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         else:
             return F.mse_loss(logit, target)
 
-    def _data_distance(self, data_list: List[Tensor], p: int, q: int) \
+    def _data_distance(self, data_list: List[Tensor]) \
             -> Tensor:
         num_dimensions = len(data_list)
         data_unsqueezed_list = []
@@ -87,10 +95,11 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
         norm_sum = torch.zeros([batch_size] * num_dimensions, device=device)
         for i, d1 in enumerate(data_unsqueezed_list):
             for d2 in data_unsqueezed_list[i + 1:]:
-                norm = torch.norm(d1 - d2, dim=-1, p=q) ** p
+                norm = torch.norm(d1 - d2,
+                                  dim=-1, p=self.dist_q) ** self.dist_p
                 norm_sum += norm
 
-        return norm_sum / (num_dimensions * p)
+        return norm_sum / (num_dimensions * self.dist_p)
 
     def _get_adversarial_loss_reg(self, data_source: Tensor,
                                   data_fake_list: List[Tensor],
@@ -105,7 +114,7 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
             .reshape(batch_size, -1).mean(dim=1)
 
         # B x ... x B   (num_target_classes + 1 times)
-        cost_tensor = self._data_distance([data_source] + data_fake_list, 2, 2)
+        cost_tensor = self._data_distance([data_source] + data_fake_list)
 
         reg_sum = -cost_tensor + disc_real_out.reshape(
             [-1] + [1] * num_target_classes)

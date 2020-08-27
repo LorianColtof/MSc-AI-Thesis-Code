@@ -158,7 +158,7 @@ class OTLossTrainer(AbstractBaseTrainer):
         dist_params = list(
             self.config.loss.options.get('dist_params', [2, 2]))
         if len(dist_params) != 2:
-            raise Exception('dist_params should be a list of 2 ints')
+            raise Exception('dist_params should be a list of 2 floats')
 
         self.dist_q = dist_params[0]
         self.dist_p = dist_params[1]
