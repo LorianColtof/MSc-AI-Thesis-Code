@@ -75,7 +75,7 @@ class AbstractBaseOTLossHelper(ABC):
         else:
             epsilon = epsilon_low
 
-        val_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
+        val_reg = epsilon * (torch.exp(reg_sum / epsilon).mean() - 1)
 
         return val_reg
 
@@ -162,6 +162,10 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         self.dist_q = dist_params[0]
         self.dist_p = dist_params[1]
+
+        self.use_divergence = self.config.loss \
+            .options.get('use_divergence', False)
+
 
     def _initialize_networks(self):
         self.generator_network = models.load_model(
@@ -389,7 +393,11 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         loss_val = self.ot_loss_helper.objective_function(
             label_real, label_fake, cost_matrix_cross)
+
         return loss_val
+
+    def _data_distance(self, data_fake: Tensor, data_real: Tensor) -> Tensor:
+        return lq_dist(data_fake, data_real, self.dist_p, self.dist_q)
 
     def _get_discriminator_loss(self,
                                 discriminator_index: int,
@@ -408,51 +416,68 @@ class OTLossTrainer(AbstractBaseTrainer):
             data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
             data_fake_flat = data_fake.reshape(batch_size_fake, -1)
-            cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat,
-                                        self.dist_p, self.dist_q)
+            cost_matrix_cross = self._data_distance(
+                data_fake_flat, data_real_flat)
 
-        if self.config.train.use_dual_critic_networks:
-            label_fake = self.discriminator_networks[0](data_fake)
-            label_real_transformed_fake = self.ot_loss_helper \
-                .dual_variable_transform(label_fake, cost_matrix_cross)
+        def get_loss(data1: Tensor, data2: Tensor,
+                     cost_matrix: Tensor) -> Tensor:
+            if self.config.train.use_dual_critic_networks:
+                label1 = self.discriminator_networks[0](data1)
+                label2_transformed_1 = self.ot_loss_helper \
+                    .dual_variable_transform(label1, cost_matrix)
 
-            label_real = self.discriminator_networks[1](data_real)
-            label_fake_transformed_real = self.ot_loss_helper \
-                .dual_variable_transform(label_real, cost_matrix_cross.T)
+                label2 = self.discriminator_networks[1](data2)
+                label1_transformed_2 = self.ot_loss_helper \
+                    .dual_variable_transform(label2, cost_matrix.T)
 
-            penalty_factor = 0.5 * 10 ** -1
+                penalty_factor = 0.5 * 10 ** -1
 
-            if discriminator_index == 0:
-                transform_penalty = penalty_factor * (
-                        label_fake - label_fake_transformed_real).pow(2).sum()
+                if discriminator_index == 0:
+                    transform_penalty = penalty_factor * (
+                            label1 - label1_transformed_2).pow(2).sum()
 
-                loss_val = self.ot_loss_helper.objective_function(
-                    label_real_transformed_fake,
-                    label_fake, cost_matrix_cross)
+                    loss_val = self.ot_loss_helper.objective_function(
+                        label2_transformed_1,
+                        label1, cost_matrix)
 
-                print("Raw loss:", loss_val.item())
-                print("Penalty:", transform_penalty.item())
+                    print("Raw loss:", loss_val.item())
+                    print("Penalty:", transform_penalty.item())
 
-                loss_val -= transform_penalty
+                    loss_val -= transform_penalty
+                else:
+                    transform_penalty = penalty_factor * (
+                            label2 - label2_transformed_1).pow(2).sum()
+
+                    loss_val = self.ot_loss_helper.objective_function(
+                        label1_transformed_2,
+                        label2, cost_matrix.T)
+
+                    print("Raw loss:", loss_val.item())
+                    print("Penalty:", transform_penalty.item())
+
+                    loss_val -= transform_penalty
+            elif self.use_same_discriminator_as_potentials:
+                loss_val = self._get_single_loss_no_transform(
+                    data2, data1, cost_matrix)
             else:
-                transform_penalty = penalty_factor * (
-                        label_real - label_real_transformed_fake).pow(2).sum()
+                loss_val = self._get_single_loss(data1, cost_matrix)
 
-                loss_val = self.ot_loss_helper.objective_function(
-                    label_fake_transformed_real,
-                    label_real, cost_matrix_cross.T)
+            return loss_val
 
-                print("Raw loss:", loss_val.item())
-                print("Penalty:", transform_penalty.item())
+        if self.use_divergence:
+            with torch.no_grad():
+                cost_matrix_real = self._data_distance(
+                    data_real_flat, data_real_flat)
+                cost_matrix_fake = self._data_distance(
+                    data_fake_flat, data_fake_flat)
 
-                loss_val -= transform_penalty
-        elif self.use_same_discriminator_as_potentials:
-            loss_val = self._get_single_loss_no_transform(
-                data_real, data_fake, cost_matrix_cross)
+            loss = -(2 * get_loss(data_fake, data_real, cost_matrix_cross)
+                     - get_loss(data_real, data_real, cost_matrix_real)
+                     - get_loss(data_fake, data_fake, cost_matrix_fake))
         else:
-            loss_val = self._get_single_loss(data_fake, cost_matrix_cross)
+            loss = -get_loss(data_fake, data_real, cost_matrix_cross)
 
-        return -loss_val
+        return loss
 
     def _get_generator_loss(self, batch_size_real: int, batch_size_fake: int,
                             data_real: Tensor) -> Tensor:
@@ -466,17 +491,35 @@ class OTLossTrainer(AbstractBaseTrainer):
         data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
         data_fake_flat = data_fake.reshape(batch_size_fake, -1)
-        cost_matrix_cross = lq_dist(data_fake_flat, data_real_flat,
-                                    self.dist_p, self.dist_q)
+        cost_matrix_cross = self._data_distance(
+            data_fake_flat, data_real_flat)
 
-        if self.config.train.use_dual_critic_networks:
-            label_fake = self.discriminator_networks[0](data_fake)
-            label_real = self.discriminator_networks[1](data_real)
+        def get_loss(data1: Tensor, data2: Tensor,
+                     cost_matrix: Tensor) -> Tensor:
+            if self.config.train.use_dual_critic_networks:
+                label1 = self.discriminator_networks[0](data1)
+                label2 = self.discriminator_networks[1](data2)
 
-            loss_val = self.ot_loss_helper.objective_function(
-                label_real, label_fake, cost_matrix_cross)
+                loss_val = self.ot_loss_helper.objective_function(
+                    label2, label1, cost_matrix)
+            elif self.use_same_discriminator_as_potentials:
+                loss_val = self._get_single_loss_no_transform(
+                    data2, data1, cost_matrix)
+            else:
+                loss_val = self._get_single_loss(data1, cost_matrix)
+
+            return loss_val
+
+        if self.use_divergence:
+            cost_matrix_real = self._data_distance(
+                data_real_flat, data_real_flat)
+            cost_matrix_fake = self._data_distance(
+                data_fake_flat, data_fake_flat)
+
+            loss = (2 * get_loss(data_fake, data_real, cost_matrix_cross)
+                    - get_loss(data_real, data_real, cost_matrix_real)
+                    - get_loss(data_fake, data_fake, cost_matrix_fake))
         else:
-            loss_val = self._get_single_loss(data_fake, cost_matrix_cross)
+            loss = get_loss(data_fake, data_real, cost_matrix_cross)
 
-        return loss_val
-
+        return loss
