@@ -100,6 +100,12 @@ class AbstractBaseTrainer(ABC):
             not self.use_same_batch_sizes \
             else self.config.train.batch_size
 
+        if steps == 0:
+            img_path = self.dataset.save_real_data(images_path, 'real_data')
+
+            if self._mlflow_enabled:
+                mlflow.log_artifact(img_path)
+
         while epochs <= self.config.train.maximum_epochs and \
                 steps <= self.config.train.maximum_steps:
             print(f"Step {steps}")

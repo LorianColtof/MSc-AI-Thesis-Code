@@ -57,7 +57,8 @@ config_schema = {
         "loss": type_with_options_schema,
         "train": {
             "type": "object",
-            "required": ["save_interval", "maximum_epochs", "maximum_steps"],
+            "required": ["type", "save_interval",
+                         "maximum_epochs", "maximum_steps"],
             "default": {
                 "critic_steps": default_critic_steps,
                 "num_samples": default_num_samples

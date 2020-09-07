@@ -12,6 +12,7 @@ from datasets import AbstractBaseDataset
 
 class GaussianMixtureDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
+    _num_plot_samples = 10000
     data_dimension = 2
 
     def __init__(self, dataset_config: Dataset, num_workers: int,
@@ -43,7 +44,12 @@ class GaussianMixtureDataset(AbstractBaseDataset):
             batch_size=batch_size, shuffle=True, drop_last=drop_last)
 
         self._source_samples_plot = torch.randn(
-            (10**3, latent_dimension), device=device)
+            (self._num_plot_samples, latent_dimension), device=device)
+
+    def _create_plot(self, img_path: str, samples: torch.Tensor):
+        plt.figure()
+        plt.plot(samples[:, 0], samples[:, 1], '.', alpha=0.1, color='b')
+        plt.savefig(img_path)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
                             images_path: str, filename: str) -> str:
@@ -52,10 +58,15 @@ class GaussianMixtureDataset(AbstractBaseDataset):
                 .detach().cpu()
 
         img_path = os.path.join(images_path, f'{filename}.png')
+        self._create_plot(img_path, data_fake)
 
-        plt.figure()
-        plt.plot(data_fake[:, 0], data_fake[:, 1], '.', alpha=0.1, color='b')
-        plt.savefig(img_path)
+        return img_path
+
+    def save_real_data(self, images_path: str, filename: str) -> str:
+        samples = next(iter(self.dataloader))[0][:self._num_plot_samples]
+        img_path = os.path.join(images_path, f'{filename}.png')
+
+        self._create_plot(img_path, samples)
 
         return img_path
 

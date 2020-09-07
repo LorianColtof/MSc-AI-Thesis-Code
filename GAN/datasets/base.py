@@ -12,3 +12,6 @@ class AbstractBaseDataset(ABC):
                             images_path: str, filename: str) -> str:
         pass
 
+    @abstractmethod
+    def save_real_data(self, images_path: str, filename: str) -> str:
+        pass
