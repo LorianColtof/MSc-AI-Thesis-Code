@@ -33,6 +33,44 @@ class IdentityDiscriminator(nn.Module):
                 self.final_linear.weight.data, p=2, dim=1)
 
 
+class SimpleMLPGenerator(nn.Module):
+    def __init__(self, latent_dim, output_dim):
+        super().__init__()
+
+        self.model = nn.Sequential(
+            nn.Linear(latent_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_dim),
+        )
+
+    def forward(self, z):
+        return self.model(z)
+
+
+class SimpleMLPDiscriminator(nn.Module):
+    def __init__(self, input_dim, final_linear_bias=True):
+        super().__init__()
+
+        self.input_dim = input_dim
+
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1, bias=final_linear_bias),
+        )
+
+    def forward(self, data):
+        return self.model(data.reshape(-1, self.input_dim))
+
+
 def load_model(model_type: str, **kwargs: Any) -> nn.Module:
     try:
         model = globals()[model_type]

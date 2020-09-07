@@ -4,6 +4,7 @@ from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 from datasets.celeba import CelebaDataset
 from datasets.mnist import MnistDataset
+from datasets.gaussian_mixture import GaussianMixtureDataset
 from datasets.multiclass.base import AbstractBaseMulticlassDataset
 from datasets.multiclass.colored_mnist import ColoredMnistDataset
 from datasets.multiclass.rotated_mnist import RotatedMnistDataset
@@ -12,6 +13,7 @@ from datasets.multiclass.celeba import CelebaDataset as MulticlassCelebaDataset
 _datasets = {
     'mnist': MnistDataset,
     'celeba': CelebaDataset,
+    'gaussian_mixture': GaussianMixtureDataset,
     'multiclass.rotated_mnist': RotatedMnistDataset,
     'multiclass.colored_mnist': ColoredMnistDataset,
     'multiclass.celeba': MulticlassCelebaDataset

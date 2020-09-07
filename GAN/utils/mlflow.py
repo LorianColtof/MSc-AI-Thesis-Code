@@ -57,7 +57,8 @@ def enable_mlflow_tracking(config: Configuration) \
                     if key in config_dict['train']:
                         del config_dict['train'][key]
 
-                del config_dict['dataset']['directory']
+                if 'directory' in config_dict['dataset']:
+                    del config_dict['dataset']['directory']
 
                 config_checksum = hashlib.sha256(
                     json.dumps(config_dict,

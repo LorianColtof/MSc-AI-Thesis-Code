@@ -30,7 +30,7 @@ config_schema = {
     "properties": {
         "dataset": {
             "type": "object",
-            "required": ["type", "directory"],
+            "required": ["type"],
             "properties": {
                 "type": {"type": "string"},
                 "directory": {"type": "string"},
@@ -95,7 +95,7 @@ config_validator = jsonschema.Draft7Validator(config_schema)
 
 class Dataset(NamedTuple):
     type: str
-    directory: str
+    directory: Optional[str] = None
     source_class: Optional[str] = None
 
 
