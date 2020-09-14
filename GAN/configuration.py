@@ -43,7 +43,8 @@ config_schema = {
             "properties": {
                 "generator": type_with_options_schema,
                 "discriminator": type_with_options_schema,
-                "source_encoder": type_with_options_schema
+                "source_encoder": type_with_options_schema,
+                "cost_function": type_with_options_schema
             }
         },
         "optimizers": {
@@ -109,6 +110,7 @@ class Models(NamedTuple):
     generator: TypeWithOptions
     discriminator: TypeWithOptions
     source_encoder: Optional[TypeWithOptions] = None
+    cost_function: Optional[TypeWithOptions] = None
 
 
 class MLflow(NamedTuple):
@@ -162,8 +164,10 @@ def _create_generator_discriminator_info(
     discriminator = TypeWithOptions(**data['discriminator'])
     source_encoder = TypeWithOptions(**data['source_encoder']) \
         if 'source_encoder' in data else None
+    cost_function = TypeWithOptions(**data['cost_function']) \
+        if 'cost_function' in data else None
 
-    return Models(generator, discriminator, source_encoder)
+    return Models(generator, discriminator, source_encoder, cost_function)
 
 
 def load_configuration(config_file: IO) -> Configuration:

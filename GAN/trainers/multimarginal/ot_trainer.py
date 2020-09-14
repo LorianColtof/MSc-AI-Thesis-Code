@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from typing import List, Dict, Iterator, Tuple
 
 import torch
@@ -9,30 +10,152 @@ from configuration import Configuration
 from . import AbstractMultimarginalBaseTrainer
 
 
-class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
+def calc_reg_sum(num_target_classes: int, cost_tensor: Tensor,
+                 disc_real_out: Tensor, disc_fake_out: List[Tensor]) -> Tensor:
+    result = -cost_tensor + disc_real_out.reshape(
+        [-1] + [1] * num_target_classes)
+    for dim, disc_fake_out in enumerate(disc_fake_out):
+        reg_sum_shape = ([1] * (dim + 1) + [-1] +
+                         [1] * (num_target_classes - dim - 1))
+        result += disc_fake_out.reshape(*reg_sum_shape) / num_target_classes
+
+    return result
+
+
+class AbstractBaseOTLossHelper(ABC):
+    config: Configuration
+
+    def __init__(self, config: Configuration):
+        self.config = config
+
+    @abstractmethod
+    def objective_function(self, label_real: Tensor,
+                           labels_fake: List[Tensor],
+                           cost_tensor: Tensor,
+                           fake_labels_only: bool = False) -> Tensor:
+        pass
+
+
+class EntropicRegularizedOTLossHelper(AbstractBaseOTLossHelper):
     def __init__(self, config: Configuration):
         super().__init__(config)
 
-        self.weight_cls = self.config.loss.options.get('weight_cls', 1)
-        self.weight_mut_info = self.config.loss.options.get(
-            'weight_mut_info', 1)
-        self.weight_idt = self.config.loss.options.get('weight_idt', 0)
-        self.cls_loss_type = self.config.loss.type
-
         self.epsilon = self.config.loss.options['epsilon']
-        self.enable_adaptive_reg_param = self.config.loss.options.get(
-            'enable_adaptive_reg_param', False)
         self.enable_log_reg_term = self.config.loss.options.get(
             'enable_log_reg_term', False)
+
+        self.enable_adaptive_reg_param = self.config.loss.options.get(
+            'enable_adaptive_reg_param', False)
+        # Limit for each term in the regularization term (exp(L))
+        # before applying regularization parameter adaption
+        self.adaptive_reg_param_sum_limit = self.config.loss.options.get(
+            'adaptive_reg_param_sum_limit', 50)
 
         if self.enable_adaptive_reg_param and self.enable_log_reg_term:
             raise Exception('Cannot have both enable_adaptive_reg_param '
                             'and enable_log_reg_term set to true.')
 
-        # Limit for each term in the regularization term (exp(L))
-        # before applying regularization parameter adaption
-        self.adaptive_reg_param_sum_limit = self.config.loss.options.get(
-            'adaptive_reg_param_sum_limit', 50)
+    def objective_function(self, label_real: Tensor,
+                           labels_fake: List[Tensor],
+                           cost_tensor: Tensor,
+                           fake_labels_only: bool = False) -> Tensor:
+
+        num_target_classes = len(labels_fake)
+        reg_sum = calc_reg_sum(num_target_classes, cost_tensor,
+                               label_real, labels_fake)
+
+        if self.enable_adaptive_reg_param:
+            epsilon_low = self.epsilon
+            sum_limit_normalized = \
+                self.adaptive_reg_param_sum_limit * epsilon_low
+
+            reg_sum_max = reg_sum.max()
+
+            if reg_sum_max > sum_limit_normalized:
+                epsilon = reg_sum_max / self.adaptive_reg_param_sum_limit
+            else:
+                epsilon = epsilon_low
+        else:
+            epsilon = self.epsilon
+
+        if self.enable_log_reg_term:
+            reg_sum_epsilon = reg_sum / epsilon
+            item_max = reg_sum_epsilon.max()
+            adv_loss_reg = epsilon * (
+                    item_max + (reg_sum_epsilon - item_max).exp().mean().log())
+        else:
+            adv_loss_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
+
+        total_adversarial_loss_targets = torch.stack(
+            [labels.mean() for labels in labels_fake]).sum()
+
+        total_adversarial_loss = (
+                total_adversarial_loss_targets / num_target_classes
+                - adv_loss_reg)
+
+        if not fake_labels_only:
+            total_adversarial_loss += label_real.mean()
+
+        return total_adversarial_loss
+
+
+class QuadraticRegularizedOTLossHelper(AbstractBaseOTLossHelper):
+    def __init__(self, config: Configuration):
+        super().__init__(config)
+
+        self.epsilon = self.config.loss.options['epsilon']
+        enable_adaptive_reg_param = self.config.loss.options.get(
+            'enable_adaptive_reg_param', False)
+        enable_log_reg_term = self.config.loss.options.get(
+            'enable_log_reg_term', False)
+
+        if enable_adaptive_reg_param:
+            raise Exception("Unsupported option for quadratic regularization: "
+                            "enable_adaptive_reg_param")
+        if enable_log_reg_term:
+            raise Exception("Unsupported option for "
+                            "quadratic regularization: enable_log_reg_term")
+
+    def objective_function(self, label_real: Tensor,
+                           labels_fake: List[Tensor],
+                           cost_tensor: Tensor,
+                           fake_labels_only: bool = False) -> Tensor:
+
+        num_target_classes = len(labels_fake)
+        reg_sum = calc_reg_sum(num_target_classes, cost_tensor,
+                               label_real, labels_fake)
+        adv_loss_reg = reg_sum.clamp(min=0).pow(2).sum() / (2 * self.epsilon)
+
+        total_adversarial_loss_targets = torch.stack(
+            [labels.mean() for labels in labels_fake]).sum()
+
+        total_adversarial_loss = (
+                total_adversarial_loss_targets / num_target_classes
+                - adv_loss_reg)
+
+        if not fake_labels_only:
+            total_adversarial_loss += label_real.mean()
+
+        return total_adversarial_loss
+
+
+class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
+    def __init__(self, config: Configuration):
+        super().__init__(config)
+
+        if config.loss.type == 'entropic':
+            self.ot_loss_helper = EntropicRegularizedOTLossHelper(config)
+        elif config.loss.type == 'quadratic':
+            self.ot_loss_helper = QuadraticRegularizedOTLossHelper(config)
+        else:
+            raise Exception(f'Unknown loss type: {config.loss.type}')
+
+        self.weight_cls = self.config.loss.options.get('weight_cls', 1)
+        self.weight_mut_info = self.config.loss.options.get(
+            'weight_mut_info', 1)
+        self.weight_idt = self.config.loss.options.get('weight_idt', 0)
+        self.cls_loss_type = self.config.loss.options.get('cls_loss_type',
+                                                          'LS')
 
         if self.cls_loss_type not in {'LS', 'BCE'}:
             raise Exception('cls_loss_type must be one of: LS, BCE')
@@ -101,67 +224,17 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
 
         return norm_sum / (num_dimensions * self.dist_p)
 
-    def _get_adversarial_loss_reg(self, data_source: Tensor,
-                                  data_fake_list: List[Tensor],
-                                  discriminators_fake: List[Tensor],
-                                  batch_size: int) -> Tuple[Tensor, Tensor]:
-        num_target_classes = len(data_fake_list)
-
-        disc_real_out, _ = self.discriminator_networks[0](data_source)
-
-        # B x 1
-        disc_real_out = disc_real_out \
-            .reshape(batch_size, -1).mean(dim=1)
-
-        # B x ... x B   (num_target_classes + 1 times)
-        cost_tensor = self._data_distance([data_source] + data_fake_list)
-
-        reg_sum = -cost_tensor + disc_real_out.reshape(
-            [-1] + [1] * num_target_classes)
-        for dim, disc_fake_out in enumerate(discriminators_fake):
-            reg_sum_shape = ([1] * (dim + 1) + [-1] +
-                             [1] * (num_target_classes - dim - 1))
-            reg_sum += disc_fake_out.reshape(*reg_sum_shape)
-
-        epsilon: float
-        adv_loss_reg: Tensor
-
-        if self.enable_adaptive_reg_param:
-            epsilon_low = self.epsilon
-            sum_limit_normalized = \
-                self.adaptive_reg_param_sum_limit * epsilon_low
-
-            reg_sum_max = reg_sum.max()
-
-            if reg_sum_max > sum_limit_normalized:
-                epsilon = reg_sum_max / self.adaptive_reg_param_sum_limit
-            else:
-                epsilon = epsilon_low
-        else:
-            epsilon = self.epsilon
-
-        if self.enable_log_reg_term:
-            reg_sum_epsilon = reg_sum / epsilon
-            item_max = reg_sum_epsilon.max()
-            adv_loss_reg = epsilon * (
-                    item_max + (reg_sum_epsilon - item_max).exp().mean().log())
-        else:
-            adv_loss_reg = epsilon * torch.exp(reg_sum / epsilon).mean()
-
-        return adv_loss_reg, disc_real_out
-
     def _get_multiclass_discriminator_loss(
             self, discriminator_index: int,
             batch_size: int, data_source: Tensor,
             data_targets: List[Tensor]) -> Tensor:
+
         device = data_source.device
-        num_target_classes = len(data_targets)
 
         with torch.no_grad():
             embedding = self.encoder_network(data_source)
 
         total_classification_loss = torch.zeros(1, device=device)
-        total_adversarial_loss_targets = torch.zeros(1, device=device)
 
         label_pos = torch.tensor([1.0] * batch_size, device=device)
         label_neg = torch.tensor([0.0] * batch_size, device=device)
@@ -190,17 +263,19 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
                  self._classification_loss(
                      disc_fake_out_class[:, i], label_neg))
 
-            total_adversarial_loss_targets += disc_fake_out.mean()
-
             discriminators_fake.append(disc_fake_out)
 
-        adv_loss_reg, disc_real_out = self._get_adversarial_loss_reg(
-            data_source, data_fake_list, discriminators_fake, batch_size)
+        disc_real_out, _ = self.discriminator_networks[0](data_source)
 
-        total_adversarial_loss = (
-                disc_real_out.mean() +
-                total_adversarial_loss_targets / num_target_classes
-                - adv_loss_reg)
+        # B x 1
+        disc_real_out = disc_real_out \
+            .reshape(batch_size, -1).mean(dim=1)
+
+        # B x ... x B   (num_target_classes + 1 times)
+        cost_tensor = self._data_distance([data_source] + data_fake_list)
+
+        total_adversarial_loss = self.ot_loss_helper.objective_function(
+            disc_real_out, discriminators_fake, cost_tensor)
 
         total_loss = (-total_adversarial_loss
                       + self.weight_cls * total_classification_loss)
@@ -212,12 +287,10 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
             target_data_iterators: Dict[str, Iterator[Tensor]]):
 
         device = data_source.device
-        num_target_classes = len(target_data_iterators.keys())
 
         embedding = self.encoder_network(data_source)
 
         total_mut_info_loss = torch.zeros(1, device=device)
-        total_adversarial_loss_targets = torch.zeros(1, device=device)
 
         total_idt_loss = torch.zeros(1, device=device)
         label_pos = torch.tensor([1.0] * batch_size, device=device)
@@ -247,18 +320,21 @@ class MultimarginalOTLossTrainer(AbstractMultimarginalBaseTrainer):
 
             total_mut_info_loss += F.binary_cross_entropy_with_logits(
                 disc_fake_out_class[:, i], label_pos)
-            total_adversarial_loss_targets += disc_fake_out.mean()
 
             discriminators_fake.append(disc_fake_out)
 
-        adv_loss_reg, disc_real_out = self._get_adversarial_loss_reg(
-            data_source, data_fake_list, discriminators_fake, batch_size)
+        disc_real_out, _ = self.discriminator_networks[0](data_source)
 
-        # Skip disc_real_out.mean() since it's constant
-        # w.r.t. generator parameters
-        total_adversarial_loss = (
-                total_adversarial_loss_targets / num_target_classes
-                - adv_loss_reg)
+        # B x 1
+        disc_real_out = disc_real_out \
+            .reshape(batch_size, -1).mean(dim=1)
+
+        # B x ... x B   (num_target_classes + 1 times)
+        cost_tensor = self._data_distance([data_source] + data_fake_list)
+
+        total_adversarial_loss = self.ot_loss_helper.objective_function(
+            disc_real_out, discriminators_fake, cost_tensor,
+            fake_labels_only=True)
 
         total_loss = (total_adversarial_loss
                       + self.weight_mut_info * total_mut_info_loss

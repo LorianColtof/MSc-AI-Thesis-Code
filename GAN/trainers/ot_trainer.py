@@ -133,6 +133,14 @@ def lq_dist(x: torch.Tensor, y: torch.Tensor, p: int, q: int) -> torch.Tensor:
     return (torch.norm(x.unsqueeze(1) - y, dim=2, p=q) ** p) / p
 
 
+def cosine_dist(x: torch.Tensor, y: torch.Tensor, p: int, q: int) \
+        -> torch.Tensor:
+    x_norms = x.norm(dim=1, p=q)
+    y_norms = y.norm(dim=1, p=q)
+
+    return (1 - (x @ y.T) / (x_norms.unsqueeze(1) * y_norms)) ** p / p
+
+
 class OTLossTrainer(AbstractBaseTrainer):
     ot_loss_helper: AbstractBaseOTLossHelper
 
@@ -155,6 +163,12 @@ class OTLossTrainer(AbstractBaseTrainer):
                             'loss.options.use_same_discriminator_as_potentials'
                             ' and train.use_dual_critic_networks')
 
+        self.dist_type = config.loss.options.get('dist_type', 'p_norm')
+        allowed_dist_types = {'p_norm', 'cosine'}
+        if self.dist_type not in allowed_dist_types:
+            raise Exception(
+                f'dist_type should be one of: {", ".join(allowed_dist_types)}')
+
         dist_params = list(
             self.config.loss.options.get('dist_params', [2, 2]))
         if len(dist_params) != 2:
@@ -165,7 +179,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         self.use_divergence = self.config.loss \
             .options.get('use_divergence', False)
-
+        self.learn_cost_function = self.config.models.cost_function is not None
 
     def _initialize_networks(self):
         self.generator_network = models.load_model(
@@ -174,16 +188,27 @@ class OTLossTrainer(AbstractBaseTrainer):
             output_dim=self.dataset.data_dimension,
             **self.config.models.generator.options)
 
-        self.discriminator_networks.append(models.load_model(
-            self.config.models.discriminator.type,
-            input_dim=self.dataset.data_dimension,
-            **self.config.models.discriminator.options))
+        num_discriminators = 1
 
         if self.config.train.use_dual_critic_networks:
+            num_discriminators += 1
+
+        for _ in range(num_discriminators):
             self.discriminator_networks.append(models.load_model(
                 self.config.models.discriminator.type,
                 input_dim=self.dataset.data_dimension,
                 **self.config.models.discriminator.options))
+
+        if self.learn_cost_function:
+            self.discriminator_networks.append(models.load_model(
+                self.config.models.cost_function.type,
+                input_dim=self.dataset.data_dimension,
+                **self.config.models.cost_function.options))
+
+            self.cost_function_network = self.discriminator_networks[-1]
+            self.cost_function = self.cost_function_network
+        else:
+            self.cost_function = lambda x: x
 
     def _load_checkpoints_dual(self, checkpoints_path: str) -> Tuple[int, int]:
         file_regex = re.compile(r'step_(\d+)_epoch_(\d+).pt')
@@ -397,15 +422,16 @@ class OTLossTrainer(AbstractBaseTrainer):
         return loss_val
 
     def _data_distance(self, data_fake: Tensor, data_real: Tensor) -> Tensor:
-        return lq_dist(data_fake, data_real, self.dist_p, self.dist_q)
+        if self.dist_type == 'cosine':
+            return cosine_dist(data_fake, data_real, self.dist_p, self.dist_q)
+        else:
+            return lq_dist(data_fake, data_real, self.dist_p, self.dist_q)
 
     def _get_discriminator_loss(self,
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
                                 data_real: Tensor) -> Tensor:
-
-        data_real_flat = data_real.reshape(batch_size_real, -1)
 
         img_shape = data_real.shape[1:]
 
@@ -415,9 +441,13 @@ class OTLossTrainer(AbstractBaseTrainer):
                             device=data_real.device)
             data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
-            data_fake_flat = data_fake.reshape(batch_size_fake, -1)
+            data_fake_cost = self.cost_function(data_fake)\
+                .reshape(batch_size_fake, -1)
+            data_real_cost = self.cost_function(data_real)\
+                .reshape(batch_size_real, -1)
+
             cost_matrix_cross = self._data_distance(
-                data_fake_flat, data_real_flat)
+                data_fake_cost, data_real_cost)
 
         def get_loss(data1: Tensor, data2: Tensor,
                      cost_matrix: Tensor) -> Tensor:
@@ -467,9 +497,9 @@ class OTLossTrainer(AbstractBaseTrainer):
         if self.use_divergence:
             with torch.no_grad():
                 cost_matrix_real = self._data_distance(
-                    data_real_flat, data_real_flat)
+                    data_real_cost, data_real_cost)
                 cost_matrix_fake = self._data_distance(
-                    data_fake_flat, data_fake_flat)
+                    data_fake_cost, data_fake_cost)
 
             loss = -(2 * get_loss(data_fake, data_real, cost_matrix_cross)
                      - get_loss(data_real, data_real, cost_matrix_real)
@@ -481,8 +511,6 @@ class OTLossTrainer(AbstractBaseTrainer):
 
     def _get_generator_loss(self, batch_size_real: int, batch_size_fake: int,
                             data_real: Tensor) -> Tensor:
-        data_real_flat = data_real.reshape(batch_size_real, -1)
-
         img_shape = data_real.shape[1:]
 
         z = torch.randn((batch_size_fake,
@@ -490,9 +518,13 @@ class OTLossTrainer(AbstractBaseTrainer):
                         device=data_real.device)
         data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
-        data_fake_flat = data_fake.reshape(batch_size_fake, -1)
+        data_fake_cost = self.cost_function(data_fake) \
+            .reshape(batch_size_fake, -1)
+        data_real_cost = self.cost_function(data_real) \
+            .reshape(batch_size_real, -1)
+
         cost_matrix_cross = self._data_distance(
-            data_fake_flat, data_real_flat)
+            data_fake_cost, data_real_cost)
 
         def get_loss(data1: Tensor, data2: Tensor,
                      cost_matrix: Tensor) -> Tensor:
@@ -512,9 +544,9 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         if self.use_divergence:
             cost_matrix_real = self._data_distance(
-                data_real_flat, data_real_flat)
+                data_real_cost, data_real_cost)
             cost_matrix_fake = self._data_distance(
-                data_fake_flat, data_fake_flat)
+                data_fake_cost, data_fake_cost)
 
             loss = (2 * get_loss(data_fake, data_real, cost_matrix_cross)
                     - get_loss(data_real, data_real, cost_matrix_real)
