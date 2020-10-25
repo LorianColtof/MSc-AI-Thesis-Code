@@ -1,0 +1,48 @@
+# Ignored
+dataset:
+  type: does_not_matter
+
+models:
+  discriminator:
+    type: SimpleMLPDiscriminator
+
+  # Ignored
+  generator:
+    type: Dummy
+
+optimizers:
+  discriminator:
+    type: Adam
+    options:
+      lr: 0.001
+      betas: [0.5, 0.999]
+
+  # Ignored
+  generator:
+    type: Dummy
+
+loss:
+  type: balanced
+  options:
+    epsilon: 0.01
+    dist_type: p_norm
+    dist_params: [1, 2]
+    use_divergence: true
+    enable_adaptive_reg_param: true
+
+train:
+  type: ot_gan
+  batch_size: 512
+  maximum_steps: 1000
+  critic_steps: 1
+
+  # Ignored
+  use_checkpoints: false
+  maximum_epochs: 0
+  latent_dimension: 0
+  save_interval: 0
+  mlflow:
+    enabled: false
+    experiment_name: dummy
+    run_name: dummy
+    tracking_server_url: dummy

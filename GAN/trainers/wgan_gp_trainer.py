@@ -38,9 +38,12 @@ class WassersteinGPLossTrainer(AbstractBaseTrainer):
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
-                                data_real: Tensor) -> Tensor:
-        with torch.no_grad():
-            data_fake = self._generate_data(batch_size_fake, data_real)
+                                data_real: Tensor,
+                                data_fake: Optional[Tensor] = None) -> Tensor:
+
+        if data_fake is None:
+            with torch.no_grad():
+                data_fake = self._generate_data(batch_size_fake, data_real)
 
         penalty = gradient_penalty(self.discriminator_networks[0],
                                    data_real, data_fake)

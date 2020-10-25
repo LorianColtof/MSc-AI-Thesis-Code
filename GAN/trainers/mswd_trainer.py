@@ -1,4 +1,4 @@
-from typing import Iterator
+from typing import Iterator, Optional
 
 import torch
 from torch import Tensor
@@ -44,9 +44,11 @@ class MaxSlicedWassersteinLossTrainer(AbstractBaseTrainer):
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
-                                data_real: Tensor) -> Tensor:
-        with torch.no_grad():
-            data_fake = self._generate_data(batch_size_fake, data_real)
+                                data_real: Tensor,
+                                data_fake: Optional[Tensor] = None) -> Tensor:
+        if data_fake is None:
+            with torch.no_grad():
+                data_fake = self._generate_data(batch_size_fake, data_real)
 
         disc_real = self.discriminator_networks[0](data_real)
         disc_fake = self.discriminator_networks[0](data_fake)
@@ -134,9 +136,12 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
-                                data_real: Tensor) -> Tensor:
-        with torch.no_grad():
-            data_fake = self._generate_data(batch_size_fake, data_real)
+                                data_real: Tensor,
+                                data_fake: Optional[Tensor] = None) -> Tensor:
+
+        if data_fake is None:
+            with torch.no_grad():
+                data_fake = self._generate_data(batch_size_fake, data_real)
 
         features_real = self.discriminator_networks[0](data_real).reshape(
             batch_size_real, -1)

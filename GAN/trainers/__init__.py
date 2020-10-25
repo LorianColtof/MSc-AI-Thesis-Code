@@ -326,7 +326,8 @@ class AbstractBaseTrainer(ABC):
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
-                                data_real: Tensor) -> Tensor:
+                                data_real: Tensor,
+                                data_fake: Optional[Tensor] = None) -> Tensor:
         pass
 
     @abstractmethod

@@ -431,15 +431,17 @@ class OTLossTrainer(AbstractBaseTrainer):
                                 discriminator_index: int,
                                 batch_size_real: int,
                                 batch_size_fake: int,
-                                data_real: Tensor) -> Tensor:
+                                data_real: Tensor,
+                                data_fake: Optional[Tensor] = None) -> Tensor:
 
         img_shape = data_real.shape[1:]
 
         with torch.no_grad():
-            z = torch.randn((batch_size_fake,
-                             self.config.train.latent_dimension),
-                            device=data_real.device)
-            data_fake = self.generator_network(z).reshape(-1, *img_shape)
+            if data_fake is None:
+                z = torch.randn((batch_size_fake,
+                                 self.config.train.latent_dimension),
+                                device=data_real.device)
+                data_fake = self.generator_network(z).reshape(-1, *img_shape)
 
             data_fake_cost = self.cost_function(data_fake)\
                 .reshape(batch_size_fake, -1)
