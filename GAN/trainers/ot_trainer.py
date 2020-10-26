@@ -1,7 +1,7 @@
 import os
 import re
 from abc import abstractmethod, ABC
-from typing import Tuple
+from typing import Tuple, Optional
 
 import torch
 from torch import Tensor
