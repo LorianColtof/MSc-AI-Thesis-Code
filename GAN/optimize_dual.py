@@ -113,8 +113,7 @@ def compute_potentials_ot_gan(trainer: OTLossTrainer,
         # For distribution 1 we need to compute the (c,e)-transform
         # We need to have a good amount of samples from distribution 2 to
         # approximate the (c,e)-transform
-        samples_2 = sample_data_2(num_transform_approx_samples)\
-            .reshape(-1, sample_data_dim)
+        samples_2 = sample_data_2(num_transform_approx_samples)
 
         potential_2_sample_values = trainer.discriminator_networks[0](
             samples_2)
@@ -201,8 +200,8 @@ def main():
 
     # These are the values for which we want
     # to compute the potential values
-    values_dist_1 = sample_1(10).reshape(-1, data_dim)
-    values_dist_2 = sample_2(10).reshape(-1, data_dim)
+    values_dist_1 = sample_1(10)
+    values_dist_2 = sample_2(10)
 
     potentials = compute_potentials(trainer, data_dim,
                                     values_dist_1, values_dist_2, sample_2)
