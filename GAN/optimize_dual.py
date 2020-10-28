@@ -1,9 +1,10 @@
 import argparse
-from typing import Callable, Tuple, List
+from typing import Callable, Tuple
 
 import matplotlib.pyplot as plt
 import torch
 from torch.distributions.normal import Normal
+from torch.distributions.binomial import Binomial
 
 import configuration
 import models
@@ -93,11 +94,11 @@ def run_optimization(trainer: AbstractBaseTrainer,
 
         steps += 1
 
-    return -loss
+    return -loss.detach()
 
 
+@torch.no_grad()
 def compute_potentials_ot_gan(trainer: OTLossTrainer,
-                              sample_data_dim: int,
                               data_1: torch.Tensor,
                               data_2: torch.Tensor,
                               sample_data_2: Callable[[int], torch.Tensor],
@@ -125,8 +126,8 @@ def compute_potentials_ot_gan(trainer: OTLossTrainer,
     return potential_1_values, potential_2_values
 
 
+@torch.no_grad()
 def compute_potentials(trainer: AbstractBaseTrainer,
-                       sample_data_dim: int,
                        data_1: torch.Tensor,
                        data_2: torch.Tensor,
                        sample_data_2: Callable[[int], torch.Tensor],
@@ -134,13 +135,22 @@ def compute_potentials(trainer: AbstractBaseTrainer,
         -> Tuple[torch.Tensor, torch.Tensor]:
     if isinstance(trainer, OTLossTrainer):
         return compute_potentials_ot_gan(
-            trainer, sample_data_dim, data_1,
-            data_2, sample_data_2, num_transform_approx_samples)
+            trainer, data_1, data_2, sample_data_2,
+            num_transform_approx_samples)
     elif isinstance(trainer, WassersteinGPLossTrainer):
         potential_1_values = trainer.discriminator_networks[0](data_1)
         potential_2_values = -trainer.discriminator_networks[0](data_2)
 
         return potential_1_values, potential_2_values
+
+
+def get_cost_matrix(trainer: AbstractBaseTrainer,
+                    data_1: torch.Tensor,
+                    data_2: torch.Tensor) -> torch.Tensor:
+    if isinstance(trainer, OTLossTrainer):
+        return trainer._data_distance(data_1, data_2)
+    elif isinstance(trainer, WassersteinGPLossTrainer):
+        return (data_1 - data_2).norm(p=1)
 
 
 def main():
@@ -180,35 +190,57 @@ def main():
     else:
         raise Exception(f'Unsupported training type: {config.train.type}')
 
-    # Example using two 1D Gaussians
-    mu_1 = torch.tensor(0.25, device=config.runtime_options['device'])
-    mu_2 = torch.tensor(0.8,  device=config.runtime_options['device'])
-    sigma = torch.tensor(0.06, device=config.runtime_options['device'])
-
-    normal_1 = Normal(mu_1, sigma)
-    normal_2 = Normal(mu_2, sigma)
-
+    device = config.runtime_options['device']
     data_dim = 1
 
+    # Example using two 1D Gaussians
+
+    # mu_1 = torch.tensor(0.25, device=device)
+    # mu_2 = torch.tensor(0.8,  device=device)
+    # sigma = torch.tensor(0.06, device=device)
+
+    # dist_1 = Normal(mu_1, sigma)
+    # dist_2 = Normal(mu_2, sigma)
+
+    # Example using two 1D Binomial distributions
+
+    n = 100
+    p_1 = torch.tensor(0.25, device=device)
+    p_2 = torch.tensor(0.8, device=device)
+
+    dist_1 = Binomial(n, probs=p_1)
+    dist_2 = Binomial(n, probs=p_2)
+
     def sample_1(size: int) -> torch.Tensor:
-        return normal_1.sample(torch.Size([size])).reshape(size, data_dim)
+        return dist_1.sample(torch.Size([size])).reshape(size, data_dim)
 
     def sample_2(size: int) -> torch.Tensor:
-        return normal_2.sample(torch.Size([size])).reshape(size, data_dim)
+        return dist_2.sample(torch.Size([size])).reshape(size, data_dim)
 
-    loss = run_optimization(trainer, data_dim, sample_1, sample_2)
-
-    # These are the values for which we want
-    # to compute the potential values
-    values_dist_1 = sample_1(10)
-    values_dist_2 = sample_2(10)
-
-    potentials = compute_potentials(trainer, data_dim,
-                                    values_dist_1, values_dist_2, sample_2)
+    run_optimization(trainer, data_dim, sample_1, sample_2)
 
     plt.plot(range(config.train.maximum_steps + 1), losses)
     plt.show()
 
+    # These are the values for which we want
+    # to compute the potential values
+    values_dist = torch.arange(0, n, device=device,
+                               dtype=torch.float32).reshape(-1, data_dim)
+
+    # Get potential values
+    potentials = compute_potentials(trainer, values_dist, values_dist,
+                                    sample_2)
+
+    # Compute cost matrix
+    cost_matrix = get_cost_matrix(trainer, values_dist, values_dist)
+
+    # Compute coupling matrix
+    coupling_matrix = torch.exp(
+        (-cost_matrix + potentials[0] + potentials[1].T)
+        / trainer.config.loss.options['epsilon'])
+
+    plt.imshow(torch.log(coupling_matrix + 1e-5))
+    plt.show()
 
 if __name__ == "__main__":
     main()
