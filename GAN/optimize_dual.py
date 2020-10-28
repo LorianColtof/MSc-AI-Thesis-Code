@@ -18,7 +18,7 @@ def run_optimization(trainer: AbstractBaseTrainer,
                      sample_data_dim: int,
                      sample_data_real: Callable[[int], torch.Tensor],
                      sample_data_fake: Callable[[int], torch.Tensor]) \
-                        -> Tuple[List[torch.nn.Module], torch.Tensor]:
+                        -> torch.Tensor:
     device = trainer.config.runtime_options['device']
 
     # We cannot just use _initialize_networks since we don't have a dataset
@@ -93,7 +93,55 @@ def run_optimization(trainer: AbstractBaseTrainer,
 
         steps += 1
 
-    return trainer.discriminator_networks, -loss
+    return -loss
+
+
+def compute_potentials_ot_gan(trainer: OTLossTrainer,
+                              sample_data_dim: int,
+                              data_1: torch.Tensor,
+                              data_2: torch.Tensor,
+                              sample_data_2: Callable[[int], torch.Tensor],
+                              num_transform_approx_samples: int = 100000) \
+        -> Tuple[torch.Tensor, torch.Tensor]:
+
+    potential_2_values = trainer.discriminator_networks[0](data_2)
+    if trainer.config.train.use_dual_critic_networks:
+        potential_1_values = trainer.discriminator_networks[1](data_1)
+    elif trainer.use_same_discriminator_as_potentials:
+        potential_1_values = trainer.discriminator_networks[0](data_1)
+    else:
+        # For distribution 1 we need to compute the (c,e)-transform
+        # We need to have a good amount of samples from distribution 2 to
+        # approximate the (c,e)-transform
+        samples_2 = sample_data_2(num_transform_approx_samples)\
+            .reshape(-1, sample_data_dim)
+
+        potential_2_sample_values = trainer.discriminator_networks[0](
+            samples_2)
+
+        cost_matrix = trainer._data_distance(samples_2, data_1)
+        potential_1_values = trainer.ot_loss_helper.dual_variable_transform(
+            potential_2_sample_values, cost_matrix)
+
+    return potential_1_values, potential_2_values
+
+
+def compute_potentials(trainer: AbstractBaseTrainer,
+                       sample_data_dim: int,
+                       data_1: torch.Tensor,
+                       data_2: torch.Tensor,
+                       sample_data_2: Callable[[int], torch.Tensor],
+                       num_transform_approx_samples: int = 100000) \
+        -> Tuple[torch.Tensor, torch.Tensor]:
+    if isinstance(trainer, OTLossTrainer):
+        return compute_potentials_ot_gan(
+            trainer, sample_data_dim, data_1,
+            data_2, sample_data_2, num_transform_approx_samples)
+    elif isinstance(trainer, WassersteinGPLossTrainer):
+        potential_1_values = trainer.discriminator_networks[0](data_1)
+        potential_2_values = -trainer.discriminator_networks[0](data_2)
+
+        return potential_1_values, potential_2_values
 
 
 def main():
@@ -141,13 +189,23 @@ def main():
     normal_1 = Normal(mu_1, sigma)
     normal_2 = Normal(mu_2, sigma)
 
+    data_dim = 1
+
     def sample_1(size: int) -> torch.Tensor:
-        return normal_1.sample(torch.Size([size]))
+        return normal_1.sample(torch.Size([size])).reshape(size, data_dim)
 
     def sample_2(size: int) -> torch.Tensor:
-        return normal_2.sample(torch.Size([size]))
+        return normal_2.sample(torch.Size([size])).reshape(size, data_dim)
 
-    run_optimization(trainer, 1, sample_1, sample_2)
+    loss = run_optimization(trainer, data_dim, sample_1, sample_2)
+
+    # These are the values for which we want
+    # to compute the potential values
+    values_dist_1 = sample_1(10).reshape(-1, data_dim)
+    values_dist_2 = sample_2(10).reshape(-1, data_dim)
+
+    potentials = compute_potentials(trainer, data_dim,
+                                    values_dist_1, values_dist_2, sample_2)
 
     plt.plot(range(config.train.maximum_steps + 1), losses)
     plt.show()
