@@ -2,6 +2,7 @@ from typing import Any
 
 from models.celeba import *
 from models.mnist import *
+from models.cifar10 import *
 from models.multimarginal_celeba import *
 from models.multimarginal_mnist import *
 

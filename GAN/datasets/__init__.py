@@ -3,6 +3,7 @@ from typing import Any, Union
 from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 from datasets.celeba import CelebaDataset
+from datasets.cifar10 import Cifar10Dataset
 from datasets.mnist import MnistDataset
 from datasets.gaussian_mixture import GaussianMixtureDataset
 from datasets.multiclass.base import AbstractBaseMulticlassDataset
@@ -12,6 +13,7 @@ from datasets.multiclass.celeba import CelebaDataset as MulticlassCelebaDataset
 
 _datasets = {
     'mnist': MnistDataset,
+    'cifar10': Cifar10Dataset,
     'celeba': CelebaDataset,
     'gaussian_mixture': GaussianMixtureDataset,
     'multiclass.rotated_mnist': RotatedMnistDataset,
