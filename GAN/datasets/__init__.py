@@ -4,6 +4,8 @@ from configuration import Dataset
 from datasets.base import AbstractBaseDataset
 from datasets.celeba import CelebaDataset
 from datasets.cifar10 import Cifar10Dataset
+from datasets.lsun_bedrooms import LsunBedroomsTrainingDataset, \
+    LsunBedroomsValidationDataset
 from datasets.mnist import MnistDataset
 from datasets.gaussian_mixture import GaussianMixtureDataset
 from datasets.multiclass.base import AbstractBaseMulticlassDataset
@@ -14,6 +16,8 @@ from datasets.multiclass.celeba import CelebaDataset as MulticlassCelebaDataset
 _datasets = {
     'mnist': MnistDataset,
     'cifar10': Cifar10Dataset,
+    'lsun_bedrooms_val': LsunBedroomsValidationDataset,
+    'lsun_bedrooms_train': LsunBedroomsTrainingDataset,
     'celeba': CelebaDataset,
     'gaussian_mixture': GaussianMixtureDataset,
     'multiclass.rotated_mnist': RotatedMnistDataset,
