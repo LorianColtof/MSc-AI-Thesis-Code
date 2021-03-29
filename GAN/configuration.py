@@ -72,9 +72,7 @@ config_schema = {
                 "maximum_steps": {"type": "integer"},
                 "critic_steps": {"type": "integer"},
                 "batch_size_fake": {"type": "integer"},
-                "use_dual_critic_networks": {"type": "boolean"},
                 "use_checkpoints": {"type": "boolean"},
-                "use_double_dual_transform": {"type": "boolean"},
                 "num_samples": {"type": "integer"},
                 "mlflow": {
                     "type": "object",
@@ -132,9 +130,7 @@ class Train(NamedTuple):
     output_directory: Optional[str] = None
     critic_steps: int = default_critic_steps
     batch_size_fake: Optional[int] = None
-    use_dual_critic_networks: bool = False
     use_checkpoints: bool = True
-    use_double_dual_transform: bool = True
     num_samples: int = default_num_samples
 
 

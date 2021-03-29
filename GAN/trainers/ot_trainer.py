@@ -156,12 +156,16 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         self.use_same_discriminator_as_potentials = self.config.loss\
             .options.get('use_same_discriminator_as_potentials', False)
+        self.use_dual_discriminator_networks = self.config.loss \
+            .options.get('use_dual_discriminator_networks', False)
+        self.use_double_dual_transform = self.config.loss \
+            .options.get('use_double_dual_transform', False)
 
         if self.use_same_discriminator_as_potentials \
-                and self.config.train.use_dual_critic_networks:
+                and self.use_dual_discriminator_networks:
             raise Exception('Incompatible options: '
                             'loss.options.use_same_discriminator_as_potentials'
-                            ' and train.use_dual_critic_networks')
+                            ' and loss.options.use_dual_discriminator_networks')
 
         self.dist_type = config.loss.options.get('dist_type', 'p_norm')
         allowed_dist_types = {'p_norm', 'cosine'}
@@ -190,7 +194,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         num_discriminators = 1
 
-        if self.config.train.use_dual_critic_networks:
+        if self.use_dual_discriminator_networks:
             num_discriminators += 1
 
         for _ in range(num_discriminators):
@@ -344,7 +348,7 @@ class OTLossTrainer(AbstractBaseTrainer):
             -> Tuple[int, int]:
         print("Loading checkpoints")
 
-        if self.config.train.use_dual_critic_networks:
+        if self.use_dual_discriminator_networks:
             step, epoch = self._load_checkpoints_dual(checkpoints_path)
         else:
             step, epoch = self._load_checkpoints_single(checkpoints_path)
@@ -387,7 +391,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
     def _save_checkpoints(self, checkpoints_path: str, epoch: int,
                           step: int) -> str:
-        if self.config.train.use_dual_critic_networks:
+        if self.use_dual_discriminator_networks:
             return self._save_checkpoints_double(checkpoints_path, epoch, step)
         else:
             return self._save_checkpoints_single(checkpoints_path, epoch, step)
@@ -398,7 +402,7 @@ class OTLossTrainer(AbstractBaseTrainer):
         label_real_transformed_fake = self.ot_loss_helper \
             .dual_variable_transform(label_fake, cost_matrix_cross)
 
-        if self.config.train.use_double_dual_transform:
+        if self.use_double_dual_transform:
             label_fake_double_transformed = self.ot_loss_helper \
                 .dual_variable_transform(label_real_transformed_fake,
                                          cost_matrix_cross.T)
@@ -453,7 +457,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         def get_loss(data1: Tensor, data2: Tensor,
                      cost_matrix: Tensor) -> Tensor:
-            if self.config.train.use_dual_critic_networks:
+            if self.use_dual_discriminator_networks:
                 label1 = self.discriminator_networks[0](data1)
                 label2_transformed_1 = self.ot_loss_helper \
                     .dual_variable_transform(label1, cost_matrix)
@@ -530,7 +534,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
         def get_loss(data1: Tensor, data2: Tensor,
                      cost_matrix: Tensor) -> Tensor:
-            if self.config.train.use_dual_critic_networks:
+            if self.use_dual_discriminator_networks:
                 label1 = self.discriminator_networks[0](data1)
                 label2 = self.discriminator_networks[1](data2)
 

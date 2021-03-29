@@ -27,7 +27,7 @@ def run_optimization(trainer: AbstractBaseTrainer,
 
     num_discriminators = 1
     if isinstance(trainer, OTLossTrainer) and \
-            trainer.config.train.use_dual_critic_networks:
+            trainer.use_dual_discriminator_networks:
         num_discriminators += 1
 
     for _ in range(num_discriminators):
@@ -106,7 +106,7 @@ def compute_potentials_ot_gan(trainer: OTLossTrainer,
         -> Tuple[torch.Tensor, torch.Tensor]:
 
     potential_2_values = trainer.discriminator_networks[0](data_2)
-    if trainer.config.train.use_dual_critic_networks:
+    if trainer.use_dual_discriminator_networks:
         potential_1_values = trainer.discriminator_networks[1](data_1)
     elif trainer.use_same_discriminator_as_potentials:
         potential_1_values = trainer.discriminator_networks[0](data_1)
