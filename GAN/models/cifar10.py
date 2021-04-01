@@ -117,3 +117,78 @@ class Cifar10CNNDiscriminator(nn.Module):
         if self.include_final_linear:
             self.final_linear.weight.data = F.normalize(
                 self.final_linear.weight.data, p=2, dim=1)
+
+
+class Cifar10DCGANGenerator(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int):
+        super().__init__()
+
+        self.latent_dim = latent_dim
+
+        self.preprocess = nn.Sequential(
+            nn.Linear(latent_dim, 4 * 4 * 4 * latent_dim),
+            nn.BatchNorm1d(4 * 4 * 4 * latent_dim),
+            nn.ReLU(True),
+        )
+
+        block1 = nn.Sequential(
+            nn.ConvTranspose2d(4 * latent_dim, 2 * latent_dim, 2, stride=2),
+            nn.BatchNorm2d(2 * latent_dim),
+            nn.ReLU(True),
+        )
+        block2 = nn.Sequential(
+            nn.ConvTranspose2d(2 * latent_dim, latent_dim, 2, stride=2),
+            nn.BatchNorm2d(latent_dim),
+            nn.ReLU(True),
+        )
+        deconv_out = nn.ConvTranspose2d(latent_dim, 3, 2, stride=2)
+
+        self.main = nn.Sequential(
+            block1,
+            block2,
+            deconv_out,
+            nn.Tanh()
+        )
+
+    def forward(self, input):
+        output = self.preprocess(input)
+        output = output.view(-1, 4 * self.latent_dim, 4, 4)
+        output = self.main(output)
+        return output.view(-1, 3, 32, 32)
+
+
+class Cifar10DCGANDiscriminator(nn.Module):
+    def __init__(self, input_dim, include_final_linear=True,
+                 final_linear_bias=True):
+        super().__init__()
+
+        dim = 128
+        self.main = nn.Sequential(
+            nn.Conv2d(3, dim, 3, 2, padding=1),
+            nn.LeakyReLU(),
+            nn.Conv2d(dim, 2 * dim, 3, 2, padding=1),
+            nn.LeakyReLU(),
+            nn.Conv2d(2 * dim, 4 * dim, 3, 2, padding=1),
+            nn.LeakyReLU(),
+        )
+
+        self.include_final_linear = include_final_linear
+
+        if include_final_linear:
+            self.final_linear = nn.Linear(4 * 4 * 4 * dim, 1, bias=final_linear_bias)
+
+        self.normalize_final_linear()
+
+    def forward(self, img):
+        output = self.main(img.reshape(-1, 3, 32, 32))
+        output = output.view(-1, 4 * 4 * 4 * 128)
+
+        if self.include_final_linear:
+            output = self.final_linear(output)
+
+        return output
+
+    def normalize_final_linear(self):
+        if self.include_final_linear:
+            self.final_linear.weight.data = F.normalize(
+                self.final_linear.weight.data, p=2, dim=1)
