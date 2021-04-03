@@ -57,6 +57,18 @@ class AbstractBaseTrainer(ABC):
         for network in self.discriminator_networks:
             network.to(device)
 
+        models_path, images_path = self._prepare_directories()
+
+        steps = 0
+        epochs = 0
+        if self.config.train.use_checkpoints:
+            if self._mlflow_enabled:
+                steps, epochs = self._load_mlflow_checkpoints()
+            elif models_path:
+                steps, epochs = self._load_checkpoints(models_path)
+
+        # Need to initialize optimizers *after* loading models from checkpoint
+
         self.generator_optimizer = self._load_optimizer(
             self.config.optimizers.generator.type,
             self.generator_network.parameters(),
@@ -72,16 +84,6 @@ class AbstractBaseTrainer(ABC):
 
         if not self.discriminator_optimizers:
             self.optimize_discriminator = False
-
-        models_path, images_path = self._prepare_directories()
-
-        steps = 0
-        epochs = 0
-        if self.config.train.use_checkpoints:
-            if self._mlflow_enabled:
-                steps, epochs = self._load_mlflow_checkpoints()
-            elif models_path:
-                steps, epochs = self._load_checkpoints(models_path)
 
         def data_iterator() -> Iterator[torch.Tensor]:
             nonlocal epochs
