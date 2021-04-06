@@ -160,6 +160,8 @@ class OTLossTrainer(AbstractBaseTrainer):
             .options.get('use_dual_discriminator_networks', False)
         self.use_double_dual_transform = self.config.loss \
             .options.get('use_double_dual_transform', False)
+        self.dual_discriminators_penalty_weight = self.config.loss \
+            .options.get('dual_discriminators_penalty_weight', 0.05)
 
         if self.use_same_discriminator_as_potentials \
                 and self.use_dual_discriminator_networks:
@@ -466,10 +468,8 @@ class OTLossTrainer(AbstractBaseTrainer):
                 label1_transformed_2 = self.ot_loss_helper \
                     .dual_variable_transform(label2, cost_matrix.T)
 
-                penalty_factor = 0.5 * 10 ** -1
-
                 if discriminator_index == 0:
-                    transform_penalty = penalty_factor * (
+                    transform_penalty = self.dual_discriminators_penalty_weight * (
                             label1 - label1_transformed_2).pow(2).sum()
 
                     loss_val = self.ot_loss_helper.objective_function(
@@ -481,7 +481,7 @@ class OTLossTrainer(AbstractBaseTrainer):
 
                     loss_val -= transform_penalty
                 else:
-                    transform_penalty = penalty_factor * (
+                    transform_penalty = self.dual_discriminators_penalty_weight * (
                             label2 - label2_transformed_1).pow(2).sum()
 
                     loss_val = self.ot_loss_helper.objective_function(
