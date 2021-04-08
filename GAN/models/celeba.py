@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.util import Conv2dResidualBlock
 
@@ -364,3 +365,74 @@ class EnhancedCelebaGenerator(nn.Module):
         output = self.convolutions(output)
 
         return output
+
+
+class CelebaDCGANGenerator(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int):
+        super().__init__()
+
+        ngf = 128
+
+        self.main = nn.Sequential(
+            nn.ConvTranspose2d(latent_dim, ngf * 8, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(ngf, 3, 4, 2, 1, bias=False),
+            nn.Tanh()
+        )
+
+    def forward(self, input):
+        return self.main(input.unsqueeze(2).unsqueeze(3))
+
+
+class CelebaDCGANDiscriminator(nn.Module):
+    def __init__(self, input_dim, include_final_linear=True,
+                 final_linear_bias=True):
+        super().__init__()
+
+        self.include_final_linear = include_final_linear
+        ndf = 64
+
+        self.main = nn.Sequential(
+            # (3, 64, 64) -> (64, 32, 32)
+            nn.Conv2d(3, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2),
+            # (64, 32, 32) -> (128, 16, 16)
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2),
+            # (128, 16, 16) -> (256, 8, 8)
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1),
+            nn.BatchNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2),
+            # (256, 8, 8) -> (512, 4, 4)
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2),
+        )
+
+        if include_final_linear:
+            # (512, 4, 4) -> (1, 1, 1)
+            self.final_linear = nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=final_linear_bias)
+
+    def forward(self, img):
+        output = self.main(img.reshape(-1, 3, 64, 64))
+
+        if self.include_final_linear:
+            output = self.final_linear(output).squeeze()
+
+        return output
+
+    def normalize_final_linear(self):
+        if self.include_final_linear:
+            self.final_linear.weight.data = F.normalize(
+                self.final_linear.weight.data, p=2, dim=1)
