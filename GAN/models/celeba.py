@@ -428,7 +428,8 @@ class CelebaDCGANDiscriminator(nn.Module):
         output = self.main(img.reshape(-1, 3, 64, 64))
 
         if self.include_final_linear:
-            output = self.final_linear(output).squeeze()
+            # B x 1
+            output = self.final_linear(output).squeeze().unsqueeze(1)
 
         return output
 
