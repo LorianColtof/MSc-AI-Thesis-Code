@@ -396,29 +396,44 @@ class CelebaDCGANGenerator(nn.Module):
 
 class CelebaDCGANDiscriminator(nn.Module):
     def __init__(self, input_dim, include_final_linear=True,
-                 final_linear_bias=True):
+                 final_linear_bias=True, include_batchnorm=True):
         super().__init__()
 
         self.include_final_linear = include_final_linear
         ndf = 64
 
-        self.main = nn.Sequential(
+        chain = [
             # (3, 64, 64) -> (64, 32, 32)
             nn.Conv2d(3, ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2),
             # (64, 32, 32) -> (128, 16, 16)
             nn.Conv2d(ndf, ndf * 2, 4, 2, 1),
-            nn.BatchNorm2d(ndf * 2),
+        ]
+
+        if include_batchnorm:
+            chain.append(nn.BatchNorm2d(ndf * 2))
+
+        chain.extend([
             nn.LeakyReLU(0.2),
             # (128, 16, 16) -> (256, 8, 8)
             nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1),
-            nn.BatchNorm2d(ndf * 4),
+        ])
+
+        if include_batchnorm:
+            chain.append(nn.BatchNorm2d(ndf * 4))
+
+        chain.extend([
             nn.LeakyReLU(0.2),
             # (256, 8, 8) -> (512, 4, 4)
             nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2),
-        )
+        ])
+
+        if include_batchnorm:
+            chain.append(nn.BatchNorm2d(ndf * 8))
+
+        chain.append(nn.LeakyReLU(0.2))
+
+        self.main = nn.Sequential(*chain)
 
         if include_final_linear:
             # (512, 4, 4) -> (1, 1, 1)
