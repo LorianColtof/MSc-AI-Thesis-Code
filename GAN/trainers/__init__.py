@@ -103,10 +103,11 @@ class AbstractBaseTrainer(ABC):
             else self.config.train.batch_size
 
         if steps == 0:
-            img_path = self.dataset.save_real_data(images_path, 'real_data')
+            img_paths = self.dataset.save_real_data(images_path, 'real_data')
 
             if self._mlflow_enabled:
-                mlflow.log_artifact(img_path)
+                for path in img_paths:
+                    mlflow.log_artifact(path)
 
         while epochs <= self.config.train.maximum_epochs and \
                 steps <= self.config.train.maximum_steps:
@@ -168,11 +169,12 @@ class AbstractBaseTrainer(ABC):
                 str_step_epoch = f'step_{steps:>06}_epoch_{epochs:>04}'
 
                 with torch.no_grad():
-                    img_path = self.dataset.save_generated_data(
+                    img_paths = self.dataset.save_generated_data(
                         self.generator_network, images_path, str_step_epoch)
 
                     if self._mlflow_enabled:
-                        mlflow.log_artifact(img_path, 'images')
+                        for path in img_paths:
+                            mlflow.log_artifact(path, 'images')
 
                 if models_path:
                     self._save_checkpoints(models_path, epochs, steps)

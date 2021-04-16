@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import List
 
 import torch
 
@@ -9,9 +10,9 @@ class AbstractBaseDataset(ABC):
 
     @abstractmethod
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
         pass
 
     @abstractmethod
-    def save_real_data(self, images_path: str, filename: str) -> str:
+    def save_real_data(self, images_path: str, filename: str) -> List[str]:
         pass

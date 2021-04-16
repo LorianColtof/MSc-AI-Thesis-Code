@@ -1,10 +1,12 @@
 import os
 from math import pi
+from typing import List
 
 import torch
 import torch.distributions as D
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
+import seaborn
 
 from configuration import Dataset
 from datasets import AbstractBaseDataset
@@ -14,6 +16,8 @@ class GaussianMixtureDataset(AbstractBaseDataset):
     _source_samples_plot: torch.Tensor
     _num_plot_samples = 10000
     data_dimension = 2
+
+    _real_samples: torch.Tensor
 
     def __init__(self, dataset_config: Dataset, num_workers: int,
                  device: torch.device, batch_size: int,
@@ -46,27 +50,40 @@ class GaussianMixtureDataset(AbstractBaseDataset):
         self._source_samples_plot = torch.randn(
             (self._num_plot_samples, latent_dimension), device=device)
 
-    def _create_plot(self, img_path: str, samples: torch.Tensor):
+    def _create_plot(self):
         plt.figure()
-        plt.plot(samples[:, 0], samples[:, 1], '.', alpha=0.1, color='b')
-        plt.savefig(img_path)
+        plt.plot(self._real_samples[:, 0], self._real_samples[:, 1],
+                 'o', alpha=0.2, color='b')
+        plt.xticks([])
+        plt.yticks([])
 
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
         with torch.no_grad():
             data_fake = generator_network(self._source_samples_plot)\
                 .detach().cpu()
 
-        img_path = os.path.join(images_path, f'{filename}.png')
-        self._create_plot(img_path, data_fake)
+        img_path = os.path.join(images_path, f'{filename}.pdf')
 
-        return img_path
+        self._create_plot()
+        seaborn.kdeplot(data_fake[:, 0], data_fake[:, 1], zorder=0,
+                        n_levels=10, shade=True)
+        plt.savefig(img_path)
 
-    def save_real_data(self, images_path: str, filename: str) -> str:
-        samples = next(iter(self.dataloader))[0][:self._num_plot_samples]
-        img_path = os.path.join(images_path, f'{filename}.png')
+        data_path = os.path.join(images_path, f'{filename}.pt')
+        torch.save(data_fake.cpu(), data_path)
 
-        self._create_plot(img_path, samples)
+        return [img_path, data_path]
 
-        return img_path
+    def save_real_data(self, images_path: str, filename: str) -> List[str]:
+        self._real_samples = next(iter(self.dataloader))[0][:self._num_plot_samples]
+        img_path = os.path.join(images_path, f'{filename}.pdf')
+
+        self._create_plot()
+        plt.savefig(img_path)
+
+        data_path = os.path.join(images_path, f'{filename}.pt')
+        torch.save(self._real_samples.cpu(), data_path)
+
+        return [img_path, data_path]
 

@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import torch
 import torch.utils.data as data
@@ -34,20 +35,20 @@ class MnistDataset(AbstractBaseDataset):
             (self._sample_image_size ** 2, latent_dimension), device=device)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
 
         data_fake = generator_network(self._source_samples_plot)
         img_path = os.path.join(images_path, f'{filename}.png')
         save_image(data_fake.reshape(-1, 1, 28, 28),
                    img_path, nrow=self._sample_image_size, normalize=True)
 
-        return img_path
+        return [img_path]
 
-    def save_real_data(self, images_path: str, filename: str) -> str:
+    def save_real_data(self, images_path: str, filename: str) -> List[str]:
         data_real = next(iter(
             self.dataloader))[0][:self._sample_image_size ** 2]
         img_path = os.path.join(images_path, f'{filename}.png')
         save_image(data_real, img_path,
                    nrow=self._sample_image_size, normalize=True)
 
-        return img_path
+        return [img_path]

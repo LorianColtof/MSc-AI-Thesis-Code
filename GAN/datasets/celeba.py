@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import matplotlib.pyplot as plt
 import torch
@@ -75,19 +76,19 @@ class CelebaDataset(AbstractBaseDataset):
         plt.close(fig)
 
     def save_generated_data(self, generator_network: torch.nn.Module,
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
         samples = generator_network(
             self._source_samples_plot).cpu().detach()
         img_path = os.path.join(images_path, f'{filename}.png')
 
         self._create_plot(img_path, samples)
 
-        return img_path
+        return [img_path]
 
-    def save_real_data(self, images_path: str, filename: str) -> str:
+    def save_real_data(self, images_path: str, filename: str) -> List[str]:
         samples = next(iter(self.dataloader))[0]
         img_path = os.path.join(images_path, f'{filename}.png')
 
         self._create_plot(img_path, samples)
 
-        return img_path
+        return [img_path]
