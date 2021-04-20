@@ -65,6 +65,18 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
         assert self.generator_networks and \
             self.generator_networks[0] is not None
 
+        models_path, images_path = self._prepare_directories()
+
+        step = 0
+
+        if self.config.train.use_checkpoints:
+            if self._mlflow_enabled:
+                step = self._load_mlflow_checkpoints()
+            elif models_path:
+                step = self._load_checkpoints(models_path)
+
+        # Need to initialize optimizers *after* loading models from checkpoint
+
         for i, network in enumerate(self.generator_networks):
             network.to(device)
 
@@ -102,15 +114,6 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
             self.encoder_network.to(device)
             self.optimize_encoder = True
 
-        models_path, images_path = self._prepare_directories()
-
-        step = 0
-
-        if self.config.train.use_checkpoints:
-            if self._mlflow_enabled:
-                step = self._load_mlflow_checkpoints()
-            elif models_path:
-                step = self._load_checkpoints(models_path)
 
         self.current_step = step
 
