@@ -8,6 +8,14 @@ from models.multimarginal_celeba import *
 from models.multimarginal_mnist import *
 
 
+class CReLU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return torch.cat((F.relu(x), F.relu(-x)), 1)
+
+
 class IdentityDiscriminator(nn.Module):
     def __init__(self, input_dim, include_final_linear=True,
                  final_linear_bias=True):
@@ -33,6 +41,17 @@ class IdentityDiscriminator(nn.Module):
         if self.include_final_linear:
             self.final_linear.weight.data = F.normalize(
                 self.final_linear.weight.data, p=2, dim=1)
+
+
+class IdentitySourceEncoder(nn.Module):
+    def __init__(self, latent_dim: int, output_dim: int):
+        super().__init__()
+
+        assert latent_dim == output_dim, "Latent dimension should " \
+                                         "be the same as the output dimension"
+
+    def forward(self, x):
+        return x.squeeze()
 
 
 class SimpleMLPGenerator(nn.Module):
@@ -66,8 +85,59 @@ class SimpleMLPDiscriminator(nn.Module):
             nn.ReLU(),
             nn.Linear(32, 32),
             nn.ReLU(),
-            nn.Linear(32, 1, bias=final_linear_bias),
+            nn.Linear(32, 1, bias=final_linear_bias)
         )
+
+    def forward(self, data):
+        return self.model(data.reshape(-1, self.input_dim))
+
+
+class SimpleMLPDiscriminatorWithClassifier(nn.Module):
+    def __init__(self, input_dim: int, num_classes: int):
+        super().__init__()
+
+        self.input_dim = input_dim
+
+        self.main = nn.Sequential(
+            nn.Linear(input_dim, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU()
+        )
+
+        self.final_src = nn.Linear(32, 1, bias=False)
+        self.final_cls = nn.Linear(32, num_classes, bias=False)
+
+    def forward(self, data):
+        h = self.main(data.reshape(-1, self.input_dim))
+        out_src = self.final_src(h)
+        out_cls = self.final_cls(h)
+
+        return out_src, out_cls.squeeze()
+
+
+class SimpleMLPCostFunction(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+
+        self.input_dim = input_dim
+
+        layers = [
+            nn.Linear(input_dim, 64),
+            # nn.LeakyReLU(0.2),
+            # nn.Linear(64, 64),
+            # CReLU(),
+            # nn.Linear(input_dim, input_dim),
+            nn.Tanh()
+        ]
+
+        self.model = nn.Sequential(*layers)
+
+        for l in layers:
+            if isinstance(l, nn.Linear):
+                nn.init.xavier_uniform_(l.weight)
 
     def forward(self, data):
         return self.model(data.reshape(-1, self.input_dim))

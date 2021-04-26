@@ -58,7 +58,7 @@ class CelebaDataset(AbstractBaseMulticlassDataset):
 
     def save_generated_data(self, source_data: Tensor,
                             generated_data: Dict[str, Tensor],
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
         num_samples = source_data.size(0)
 
         img_list = []
@@ -73,7 +73,7 @@ class CelebaDataset(AbstractBaseMulticlassDataset):
         save_image(img_list, path, nrow=len(self.classes),
                    padding=0, normalize=True)
 
-        return path
+        return [path]
 
     @property
     def target_classes(self) -> List[str]:

@@ -139,7 +139,7 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
             sample_images = next(source_data_iterator)[0]
             num_samples = self.config.train.num_samples
             if sample_images.size(0) > num_samples:
-                sample_images = sample_images[:num_samples, :, :, :]
+                sample_images = sample_images[:num_samples]
 
         while self.current_step <= self.config.train.maximum_steps:
             print(f"Step {self.current_step}")
@@ -196,12 +196,13 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
                         for _class in self.dataset.target_classes
                     }
 
-                    img_path = self.dataset.save_generated_data(
+                    img_paths = self.dataset.save_generated_data(
                         sample_images, generated_imgs,
                         images_path, str_step_epoch)
 
                     if self._mlflow_enabled:
-                        mlflow.log_artifact(img_path, 'images')
+                        for path in img_paths:
+                            mlflow.log_artifact(path, 'images')
 
                 for generator in self.generator_networks:
                     generator.train()

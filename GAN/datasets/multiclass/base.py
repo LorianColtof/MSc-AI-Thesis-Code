@@ -14,7 +14,7 @@ class AbstractBaseMulticlassDataset(ABC):
     @abstractmethod
     def save_generated_data(self, source_data: Tensor,
                             generated_data: Dict[str, Tensor],
-                            images_path: str, filename: str) -> str:
+                            images_path: str, filename: str) -> List[str]:
         pass
 
     def get_dataloader(self, _class: str) -> DataLoader:
