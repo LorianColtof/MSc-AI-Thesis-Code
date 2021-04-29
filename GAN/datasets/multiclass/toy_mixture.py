@@ -34,7 +34,7 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
 
         def create_dataloader(x: float, y: float) -> DataLoader:
             mean = torch.tensor([x, y], device=device)
-            scale = torch.Tensor([0.2], device=device)
+            scale = torch.tensor([0.2], device=device)
             dist = D.Normal(mean, scale)
             samples = dist.sample((num_samples, ))
 
