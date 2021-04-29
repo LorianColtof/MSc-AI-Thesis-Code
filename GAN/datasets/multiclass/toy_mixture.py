@@ -85,9 +85,7 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
                  'o', alpha=0.2, color='g')
 
         for i, (_class, data) in enumerate(generated_data.items()):
-            target_samples = \
-                next(iter(self.target_dataloaders[_class]))[0][:self._num_plot_samples]\
-                .cpu().detach()
+            target_samples = self._target_samples[_class]
             plt.plot(target_samples[:, 0], target_samples[:, 1],
                      'o', alpha=0.2, color=self._plot_colors[i])
 
