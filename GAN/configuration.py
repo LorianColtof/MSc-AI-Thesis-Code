@@ -34,7 +34,8 @@ config_schema = {
             "properties": {
                 "type": {"type": "string"},
                 "directory": {"type": "string"},
-                "source_class": {"type": "string"}
+                "source_class": {"type": "string"},
+                "target_type": {"type": "string"}
             }
         },
         "models": {
@@ -97,7 +98,7 @@ class Dataset(NamedTuple):
     type: str
     directory: Optional[str] = None
     source_class: Optional[str] = None
-
+    target_type: Optional[str] = None
 
 class TypeWithOptions(NamedTuple):
     type: str

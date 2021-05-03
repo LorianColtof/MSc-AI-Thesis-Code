@@ -32,10 +32,26 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
         num_samples = 4 * 10 ** 4
         radius = 1.5
 
-        def create_dataloader(x: float, y: float) -> DataLoader:
+        if dataset_config.target_type:
+            target_type = dataset_config.target_type
+            allowed_target_types = {"gaussian", "uniform"}
+            if target_type not in allowed_target_types:
+                raise Exception(
+                    f"target_type must be one of: {','.join(allowed_target_types)}")
+        else:
+            target_type = "gaussian"
+
+        def create_dataloader(x: float, y: float, type: str) -> DataLoader:
             mean = torch.tensor([x, y], device=device)
-            scale = torch.tensor([0.2], device=device)
-            dist = D.Normal(mean, scale)
+
+            if type == "gaussian":
+                scale = torch.tensor([0.2], device=device)
+                dist = D.Normal(mean, scale)
+            else:
+                low = mean - 0.2
+                high = mean + 0.2
+                dist = D.Uniform(low, high)
+
             samples = dist.sample((num_samples, ))
 
             return DataLoader(
@@ -51,7 +67,7 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
 
             return samples, samples_data
 
-        self.source_dataloader = create_dataloader(0.0, 0.0)
+        self.source_dataloader = create_dataloader(0.0, 0.0, "gaussian")
         self._source_samples, source_samples_data =\
             sample_dataloader(self.source_dataloader)
 
@@ -68,7 +84,7 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
             y = radius * torch.sin(angle)
 
             _class = str(i)
-            self.target_dataloaders[_class] = create_dataloader(x, y)
+            self.target_dataloaders[_class] = create_dataloader(x, y, target_type)
 
             samples, samples_data = sample_dataloader(self.target_dataloaders[_class])
             self._target_samples[_class] = samples
