@@ -50,6 +50,9 @@ class GaussianMixtureDataset(AbstractBaseDataset):
         self._source_samples_plot = torch.randn(
             (self._num_plot_samples, latent_dimension), device=device)
 
+        self._real_samples = next(iter(self.dataloader))[0][:self._num_plot_samples] \
+            .cpu().detach()
+
     def _create_plot(self):
         plt.figure()
         plt.plot(self._real_samples[:, 0], self._real_samples[:, 1],
@@ -76,8 +79,6 @@ class GaussianMixtureDataset(AbstractBaseDataset):
         return [img_path, data_path]
 
     def save_real_data(self, images_path: str, filename: str) -> List[str]:
-        self._real_samples = next(iter(self.dataloader))[0][:self._num_plot_samples]\
-            .cpu().detach()
         img_path = os.path.join(images_path, f'{filename}.pdf')
 
         self._create_plot()
