@@ -14,8 +14,7 @@ from datasets.multiclass.base import AbstractBaseMulticlassDataset
 class CelebaEdgeDataset(AbstractBaseMulticlassDataset):
     def __init__(self, dataset_config: Dataset, device: torch.device,
                  num_workers: int, batch_size: int, latent_dimension: int):
-        classes = ['Edge', 'Black_Hair', 'Blond_Hair', 'Eyeglasses',
-                   'Mustache', 'Pale_Skin']
+        classes = ['Edge', 'Black_Hair', 'Blond_Hair', 'Brown_Hair']
 
         self.source_class = 'Edge'
 
