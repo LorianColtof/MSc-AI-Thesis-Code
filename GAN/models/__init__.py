@@ -73,23 +73,35 @@ class SimpleMLPGenerator(nn.Module):
 
 
 class SimpleMLPDiscriminator(nn.Module):
-    def __init__(self, input_dim, final_linear_bias=True):
+    def __init__(self, input_dim, include_final_linear=True, final_linear_bias=True):
         super().__init__()
 
+        self.include_final_linear = include_final_linear
         self.input_dim = input_dim
 
-        self.model = nn.Sequential(
+        self.main = nn.Sequential(
             nn.Linear(input_dim, 32),
             nn.ReLU(),
             nn.Linear(32, 32),
             nn.ReLU(),
             nn.Linear(32, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1, bias=final_linear_bias)
+            nn.ReLU()
         )
 
+        if include_final_linear:
+            self.final_linear = nn.Linear(32, 1, bias=final_linear_bias)
+
     def forward(self, data):
-        return self.model(data.reshape(-1, self.input_dim))
+        output = self.main(data.reshape(-1, self.input_dim))
+        if self.include_final_linear:
+            output = self.final_linear(output)
+
+        return output
+
+    def normalize_final_linear(self):
+        if self.include_final_linear:
+            self.final_linear.weight.data = F.normalize(
+                self.final_linear.weight.data, p=2, dim=1)
 
 
 class SimpleMLPDiscriminatorWithClassifier(nn.Module):
