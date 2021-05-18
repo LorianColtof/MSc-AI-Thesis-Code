@@ -19,7 +19,7 @@ from datasets.multiclass.base import AbstractBaseMulticlassDataset
 class ToyMixtureDataset(AbstractBaseMulticlassDataset):
     data_dimension = 2
     source_class = 'center'
-    _num_plot_samples = 10000
+    _num_plot_samples = 128
 
     _source_samples: torch.Tensor
     _pickle_data: Dict[str, bytes]
@@ -59,7 +59,15 @@ class ToyMixtureDataset(AbstractBaseMulticlassDataset):
                 batch_size=batch_size, shuffle=True, drop_last=True)
 
         def sample_dataloader(dataloader: DataLoader) -> Tuple[torch.Tensor, bytes]:
-            samples = next(iter(dataloader))[0][:self._num_plot_samples].cpu().detach()
+            sample_list = []
+            num_samples = 0
+
+            while num_samples < self._num_plot_samples:
+                samples_batch = next(iter(dataloader))[0].cpu().detach()
+                sample_list.append(samples_batch)
+                num_samples += samples_batch.size(0)
+
+            samples = torch.cat(sample_list, dim=0)[:self._num_plot_samples]
             buffer = io.BytesIO()
             torch.save(samples, buffer)
             samples_data = buffer.getvalue()
