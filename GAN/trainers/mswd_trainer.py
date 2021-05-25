@@ -52,7 +52,13 @@ class MaxSlicedWassersteinLossTrainer(AbstractBaseTrainer):
 
         disc_real = self.discriminator_networks[0](data_real)
         disc_fake = self.discriminator_networks[0](data_fake)
-        loss_discriminator = disc_real.mean() - disc_fake.mean()
+
+        # Moment separator
+        # loss_discriminator = -(disc_real.mean() - disc_fake.mean())
+
+        # Log-loss
+        loss_discriminator = -(disc_real.sigmoid().log().sum()
+                               + (1 - disc_fake.sigmoid()).log().sum())
 
         return loss_discriminator
 
@@ -118,7 +124,7 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
     def _sample_directions_data(self, device: torch.device) -> torch.Tensor:
         with torch.no_grad():
             data_sample = next(self.data_iterator_directions)[0].to(device)
-            
+
             features_sample = self.discriminator_networks[0](
                 data_sample).reshape(self.num_projections, -1)
 
@@ -187,5 +193,3 @@ class SampledSlicedWassersteinLossTrainer(MaxSlicedWassersteinLossTrainer):
                 - disc_fake_sorted).pow(2).mean()
 
         return loss
-
-
