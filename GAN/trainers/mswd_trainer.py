@@ -57,8 +57,12 @@ class MaxSlicedWassersteinLossTrainer(AbstractBaseTrainer):
         # loss_discriminator = -(disc_real.mean() - disc_fake.mean())
 
         # Log-loss
-        loss_discriminator = -(disc_real.sigmoid().log().sum()
-                               + (1 - disc_fake.sigmoid()).log().sum())
+
+        disc_real_sigmoid_log = torch.clamp(disc_real.sigmoid().log(), min=-100)
+        disc_fake_sigmoid_log = torch.clamp((1 - disc_fake).sigmoid().log(), min=-100)
+
+        loss_discriminator = -(disc_real_sigmoid_log.sum()
+                               + disc_fake_sigmoid_log.sum())
 
         return loss_discriminator
 
