@@ -133,6 +133,19 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
             _class: i for i, _class in enumerate(self.dataset.target_classes)
         }
 
+        sample_images: Tensor
+
+        with torch.no_grad():
+            sample_images_list = []
+            num_samples = 0
+            while num_samples < self.config.train.num_samples:
+                sample_images_batch = next(source_data_iterator)[0]
+                sample_images_list.append(sample_images_batch)
+                num_samples += sample_images_batch.size(0)
+
+            sample_images = torch.cat(
+                sample_images_list, dim=0)[:self.config.train.num_samples]
+
         while self.current_step <= self.config.train.maximum_steps:
             print(f"Step {self.current_step}")
 
@@ -179,16 +192,6 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
                 self.encoder_network.eval()
 
                 with torch.no_grad():
-                    sample_images_list = []
-                    num_samples = 0
-                    while num_samples < self.config.train.num_samples:
-                        sample_images_batch = next(source_data_iterator)[0]
-                        sample_images_list.append(sample_images_batch)
-                        num_samples += sample_images_batch.size(0)
-
-                    sample_images = torch.cat(
-                        sample_images_list, dim=0)[:self.config.train.num_samples]
-
                     embeddings = self.encoder_network(
                         sample_images.to(device))
                     generated_imgs = {
