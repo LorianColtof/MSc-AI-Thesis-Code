@@ -219,17 +219,17 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
 
                 if self._mlflow_enabled:
                     if self.optimize_encoder:
-                        mlflow.pytorch.log_model(
+                        self._log_mlflow_model_safe(
                             self.encoder_network,
                             f'models/source_encoder_{str_step_epoch}/')
 
                     for i, generator in enumerate(self.generator_networks):
-                        mlflow.pytorch.log_model(
+                        self._log_mlflow_model_safe(
                             generator,
                             f'models/generator_{i}_{str_step_epoch}/')
 
                     for i, disc in enumerate(self.discriminator_networks):
-                        mlflow.pytorch.log_model(
+                        self._log_mlflow_model_safe(
                             disc,
                             f'models/discriminator_{i}_{str_step_epoch}/')
 

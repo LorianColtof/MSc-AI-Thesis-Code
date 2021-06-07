@@ -3,7 +3,7 @@ import re
 import tempfile
 import traceback
 from abc import ABC, abstractmethod
-from typing import Tuple, Iterator, Any, Type, List, Dict, Optional
+from typing import Tuple, Iterator, Any, Type, List, Dict, Optional, Callable
 
 import torch
 from paramiko.ssh_exception import SSHException
@@ -43,10 +43,9 @@ class AbstractBaseTrainer(ABC):
     def _mlflow_enabled(self):
         return self.config.train.mlflow.enabled
 
-    def _log_mlflow_artifact_safe(self, local_path: str,
-                                  artifact_path: Optional[str] = None) -> None:
+    def _log_mlflow_safe(self, action: Callable[[], None]) -> None:
         try:
-            mlflow.log_artifact(local_path, artifact_path)
+            action()
             self._artifact_log_failures = 0
         except SSHException:
             self._artifact_log_failures += 1
@@ -56,6 +55,17 @@ class AbstractBaseTrainer(ABC):
 
             if self._artifact_log_failures >= 5:
                 raise Exception("Too many artifact log failures occurred.")
+
+    def _log_mlflow_artifact_safe(self, local_path: str,
+                                  artifact_path: Optional[str] = None) -> None:
+        self._log_mlflow_safe(
+            lambda: mlflow.log_artifact(local_path, artifact_path))
+
+    def _log_mlflow_model_safe(self, pytorch_model: Any,
+                               artifact_path: str, **kwargs) -> None:
+        self._log_mlflow_safe(
+            lambda: mlflow.pytorch.log_model(
+                pytorch_model, artifact_path, **kwargs))
 
     @enable_mlflow_tracking_class('config')
     def train(self):
@@ -198,12 +208,12 @@ class AbstractBaseTrainer(ABC):
                     self._save_checkpoints(models_path, epochs, steps)
 
                 if self._mlflow_enabled:
-                    mlflow.pytorch.log_model(
+                    self._log_mlflow_model_safe(
                         self.generator_network,
                         f'models/generator_{str_step_epoch}/')
 
                     for i, disc in enumerate(self.discriminator_networks):
-                        mlflow.pytorch.log_model(
+                        self._log_mlflow_model_safe(
                             disc,
                             f'models/discriminator_{i}_{str_step_epoch}/')
 
