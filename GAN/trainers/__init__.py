@@ -54,7 +54,7 @@ class AbstractBaseTrainer(ABC):
             print(f"Current amount of artifact log failures: "
                   f"{self._artifact_log_failures}")
 
-            if self._artifact_log_failures >= 3:
+            if self._artifact_log_failures >= 5:
                 raise Exception("Too many artifact log failures occurred.")
 
     @enable_mlflow_tracking_class('config')
