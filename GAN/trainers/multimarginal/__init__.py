@@ -207,7 +207,7 @@ class AbstractMultimarginalBaseTrainer(AbstractBaseTrainer, ABC):
 
                     if self._mlflow_enabled:
                         for path in img_paths:
-                            mlflow.log_artifact(path, 'images')
+                            self._log_mlflow_artifact_safe(path, 'images')
 
                 for generator in self.generator_networks:
                     generator.train()

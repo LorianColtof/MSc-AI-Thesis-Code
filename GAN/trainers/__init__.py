@@ -1,10 +1,12 @@
 import os
 import re
 import tempfile
+import traceback
 from abc import ABC, abstractmethod
 from typing import Tuple, Iterator, Any, Type, List, Dict, Optional
 
 import torch
+from paramiko.ssh_exception import SSHException
 from torch import Tensor
 from torch.nn import Module, Parameter
 from torch.optim.optimizer import Optimizer
@@ -32,12 +34,28 @@ class AbstractBaseTrainer(ABC):
 
     optimize_discriminator = True
 
+    _artifact_log_failures = 0
+
     def __init__(self, config: Configuration):
         self.config = config
 
     @property
     def _mlflow_enabled(self):
         return self.config.train.mlflow.enabled
+
+    def _log_mlflow_artifact_safe(self, local_path: str,
+                                  artifact_path: Optional[str] = None) -> None:
+        try:
+            mlflow.log_artifact(local_path, artifact_path)
+            self._artifact_log_failures = 0
+        except SSHException:
+            self._artifact_log_failures += 1
+            traceback.print_exc()
+            print(f"Current amount of artifact log failures: "
+                  f"{self._artifact_log_failures}")
+
+            if self._artifact_log_failures >= 3:
+                raise Exception("Too many artifact log failures occurred.")
 
     @enable_mlflow_tracking_class('config')
     def train(self):
@@ -107,7 +125,7 @@ class AbstractBaseTrainer(ABC):
 
             if self._mlflow_enabled:
                 for path in img_paths:
-                    mlflow.log_artifact(path)
+                    self._log_mlflow_artifact_safe(path)
 
         while epochs <= self.config.train.maximum_epochs and \
                 steps <= self.config.train.maximum_steps:
@@ -174,7 +192,7 @@ class AbstractBaseTrainer(ABC):
 
                     if self._mlflow_enabled:
                         for path in img_paths:
-                            mlflow.log_artifact(path, 'images')
+                            self._log_mlflow_artifact_safe(path, 'images')
 
                 if models_path:
                     self._save_checkpoints(models_path, epochs, steps)
